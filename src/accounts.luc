@@ -1,0 +1,129 @@
+## The accounts a user has, in `~/.luced-message/accounts.toml`, one table each:
+##
+##     [work]
+##     kind = "email"
+##     name = "Work"
+##     address = "alice@example.com"
+##     imap_host = "imap.example.com"   imap_port = 993   imap_security = "tls"
+##     smtp_host = "smtp.example.com"   smtp_port = 587   smtp_security = "starttls"
+##     user = "alice@example.com"       password = "…"
+##
+## Security is "tls", "starttls" or "plain" (plain only for a local test server).
+## The password is kept in this file for now, readable only by its owner's account;
+## the system keychain takes it over next.
+from toml import Table
+import files
+import paths
+
+## The application's directory: settings, accounts and the message store.
+pub func home() -> str!:
+    let directory = paths.join(files.home_directory(), ".luced-message")
+    files.ensure_directory(directory)
+    return directory
+
+## One account: which kind of source it is and how to reach it.
+pub class Account:
+    ## The table name, `work` in `[work]`: the store's directory for it.
+    pub let id: str
+    pub var kind: str = "email"
+    pub var name: str = ""
+    pub var address: str = ""
+    pub var imap_host: str = ""
+    pub var imap_port: int = 993
+    pub var imap_security: str = "tls"
+    pub var smtp_host: str = ""
+    pub var smtp_port: int = 587
+    pub var smtp_security: str = "starttls"
+    pub var user: str = ""
+    pub var password: str = ""
+
+    pub func init(self, id: str):
+        self.id = id
+
+    ## The name to show: the account's name, else its address.
+    pub func title(self) -> str:
+        return self.name if self.name != "" else self.address
+
+    ## The mail engine's configuration line (mail_service.start_service).
+    pub func engine_line(self, store: str) -> str:
+        let fields = [self.id, store, self.imap_host, f"{self.imap_port}", self.imap_security, self.user, self.password,
+                      self.smtp_host, f"{self.smtp_port}", self.smtp_security, self.user, self.password]
+        var escaped: list[str] = []
+        for field in fields:
+            escaped.append(escape(field))
+        return escaped.join("\t")
+
+## `text` as one field of an engine line: tabs, newlines and backslashes escaped.
+pub func escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
+
+## `text` as a TOML basic string, quotes included.
+func quoted(text: str) -> str:
+    return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+## Where the accounts live; reading never rewrites the file.
+pub class AccountStore:
+    pub let path: str
+    ## Why the last load read nothing, or "".
+    pub var warning: str = ""
+
+    pub func init(self, directory: str) -> unit!:
+        self.path = paths.join(directory, "accounts.toml")
+
+    pub func load(self) -> list[Account]!:
+        self.warning = ""
+        var accounts: list[Account] = []
+        let source = files.read_text(self.path, limit = 1048576) catch failure:
+            discard(failure)
+            return accounts
+        let table = Table(source) catch failure:
+            self.warning = f"Accounts not read ({self.path}): {failure.message}"
+            return accounts
+        var ids: list[str] = []
+        for (key, value) in table.values:
+            discard(value)
+            let dot = key.index_of(".") else continue
+            let id = key[..<dot]
+            if not (id in ids):
+                ids.append(id)
+        for id in ids:
+            let base = id + "."
+            let account = Account(id)
+            account.kind = table.string(base + "kind", "email")
+            account.name = table.string(base + "name", "")
+            account.address = table.string(base + "address", "")
+            account.imap_host = table.string(base + "imap_host", "")
+            account.imap_port = int(table.number(base + "imap_port", 993.0, 1.0, 65535.0))
+            account.imap_security = table.string(base + "imap_security", "tls")
+            account.smtp_host = table.string(base + "smtp_host", "")
+            account.smtp_port = int(table.number(base + "smtp_port", 587.0, 1.0, 65535.0))
+            account.smtp_security = table.string(base + "smtp_security", "starttls")
+            account.user = table.string(base + "user", account.address)
+            account.password = table.string(base + "password", "")
+            accounts.append(account)
+        return accounts
+
+    pub func save(self, accounts: list[Account]) -> unit!:
+        var text = "# luced-message accounts\n"
+        for account in accounts:
+            text = text + f"\n[{account.id}]\n"
+            text = text + f"kind = {quoted(account.kind)}\nname = {quoted(account.name)}\naddress = {quoted(account.address)}\n"
+            text = text + f"imap_host = {quoted(account.imap_host)}\nimap_port = {account.imap_port}\nimap_security = {quoted(account.imap_security)}\n"
+            text = text + f"smtp_host = {quoted(account.smtp_host)}\nsmtp_port = {account.smtp_port}\nsmtp_security = {quoted(account.smtp_security)}\n"
+            text = text + f"user = {quoted(account.user)}\npassword = {quoted(account.password)}\n"
+        files.write_text(self.path, text)
+
+## An id for a new account from its address: letters and digits, `_` for the rest.
+pub func account_id(address: str, taken: list[str]) -> str:
+    var id = ""
+    for character in address.lower():
+        let letter = (character >= "a" and character <= "z") or (character >= "0" and character <= "9")
+        id = id + (character if letter else "_")
+    if id == "":
+        id = "account"
+    var candidate = id
+    var number = 2
+    while candidate in taken:
+        candidate = f"{id}_{number}"
+        number += 1
+    return candidate

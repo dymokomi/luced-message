@@ -1,0 +1,136 @@
+## The reader: the picked message's header (From, To, Cc, Date, Subject), its body as
+## text in a read-only, wrapped editor, and its attachments, each with a Save button.
+## A message whose body is not in the store yet shows "Loading…" until the source
+## says it has arrived.
+from ui import VStack, HStack, Text, TextEditor, Rule, Spacer, Button, Font, Application, Widget
+from interop import Connection
+import mime
+import clock
+
+## What the reader shows, for replying and forwarding.
+pub class Shown:
+    pub let source: int
+    pub let folder: str
+    pub let uid: int
+    pub var sender: str = ""
+    pub var sender_address: str = ""
+    pub var reply_to: str = ""
+    pub var to: str = ""
+    pub var cc: str = ""
+    pub var subject: str = ""
+    pub var date: int = 0
+    pub var message_id: str = ""
+    pub var references: str = ""
+    pub var body: str = ""
+    pub var file: str = ""
+
+    pub func init(self, source: int, folder: str, uid: int):
+        self.source = source
+        self.folder = folder
+        self.uid = uid
+
+pub class Reader:
+    pub let body: VStack
+    let font: Font
+    let from_line: Text
+    let to_line: Text
+    let cc_line: Text
+    let date_line: Text
+    let subject_line: Text
+    let text: TextEditor
+    let attachments: HStack
+    var connections: list[Connection] = []
+    pub var shown: Shown? = none
+    pub var app: Application? = none
+
+    pub func init(self, font: Font) -> unit!:
+        self.font = font
+        self.from_line = Text("", font = font)
+        self.to_line = Text("", font = font, muted = true)
+        self.cc_line = Text("", font = font, muted = true)
+        self.date_line = Text("", font = font, muted = true)
+        self.subject_line = Text("", font = font)
+        self.text = TextEditor("", read_only = true, line_numbers = false, font = font, wrap = true)
+        self.text.layout().set_flex()
+        self.attachments = HStack([Spacer()], spacing = 6.0, padding = 4.0)
+        let header = VStack([self.from_line, self.to_line, self.cc_line, self.date_line, self.subject_line], spacing = 2.0, padding = 8.0)
+        self.body = VStack([header, Rule(structural = true), self.text, self.attachments], spacing = 0.0)
+        self.body.layout().set_flex()
+        self.clear()
+
+    ## Show nothing.
+    pub func clear(self) -> unit!:
+        self.shown = none
+        for line in [self.from_line, self.to_line, self.cc_line, self.date_line, self.subject_line]:
+            line.set_text("")
+        self.text.set_text("")
+        self.set_attachments([])
+
+    ## Say that message `uid` is on its way.
+    pub func loading(self, source: int, folder: str, uid: int) -> unit!:
+        self.clear()
+        self.shown = Shown(source, folder, uid)
+        self.text.set_text("Loading…")
+
+    ## Show the message in `file`.
+    pub func show(self, source: int, folder: str, uid: int, file: str) -> unit!:
+        let message = mime.open(file)
+        let shown = Shown(source, folder, uid)
+        shown.file = file
+        shown.sender = message.address_line("From")
+        shown.sender_address = message.address_mailbox("From", 0) if message.address_count("From") > 0 else ""
+        shown.reply_to = message.address_line("Reply-To")
+        shown.to = message.address_line("To")
+        shown.cc = message.address_line("Cc")
+        shown.subject = message.subject()
+        shown.date = message.date_seconds()
+        shown.message_id = message.message_id()
+        shown.references = message.references()
+        shown.body = message.body_text()
+        self.shown = shown
+        self.from_line.set_text(f"From     {shown.sender}")
+        self.to_line.set_text(f"To       {shown.to}")
+        self.cc_line.set_text(f"Cc       {shown.cc}")
+        self.cc_line.layout().set_visible(shown.cc != "")
+        self.date_line.set_text(f"Date     {clock.long_date(shown.date)}")
+        self.date_line.layout().set_visible(shown.date != 0)
+        let subject = shown.subject if shown.subject != "" else "(no subject)"
+        self.subject_line.set_text(f"Subject  {subject}")
+        self.text.set_text(shown.body)
+        var buttons: list[Widget] = []
+        for nth in 0..<message.attachment_count():
+            let part = message.attachment(nth)
+            var name = message.part_filename(part)
+            if name == "":
+                name = f"attachment-{nth + 1}"
+            let size = message.part_size(part)
+            let button = Button(f"@ {name}  {size_text(size * 3 // 4)}", font = self.font)
+            self.connections.append(button.on_click(func () -> unit!:
+                self.save(file, part, name)))
+            buttons.append(button)
+        self.set_attachments(buttons)
+
+    func set_attachments(self, buttons: list[Widget]) -> unit!:
+        var children: list[Widget] = []
+        for button in buttons:
+            children.append(button)
+        children.append(Spacer())
+        self.attachments.set_children(children)
+        self.attachments.layout().set_visible(buttons.length > 0)
+
+    ## Ask where to save attachment `part` of the message in `file`, and save it.
+    func save(self, file: str, part: int, name: str) -> unit!:
+        let app = self.app else return
+        let target = app.save_file("Save attachment", name)
+        if target == "":
+            return
+        let message = mime.open(file)
+        message.save_part(part, target)
+
+## A byte count as people read it.
+func size_text(count: int) -> str:
+    if count < 1024:
+        return f"{count} B"
+    if count < 1024 * 1024:
+        return f"{count // 1024} KB"
+    return f"{count // (1024 * 1024)} MB"

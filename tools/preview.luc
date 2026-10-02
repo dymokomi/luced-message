@@ -1,0 +1,44 @@
+## Capture the window after its sources have synced, for tools/preview.py:
+##     preview OUTPUT.ppm HOME [message-position]
+## Waits until the first folder's messages are listed, picks one, lets the reader
+## show it, then reads the frame back.
+import probe
+from app import LuceMessage
+
+pub func main(arguments: list[str]) -> int!:
+    let messenger = LuceMessage(arguments[1])
+    let position = int(arguments[2]) if arguments.length > 2 else 0
+    var ticks = 0
+    var listed = -1
+    var capture = -1
+    let timer = messenger.app.every(0.05, func () -> unit!:
+        ticks += 1
+        let table = messenger.panels.messages.table
+        if listed < 0 and messenger.panels.messages.picked_uid() < 0 and ticks > 10:
+            # No rows until the first sync lands.
+            table.select(position) catch failure:
+                discard(failure)
+            if messenger.panels.messages.picked_uid() >= 0:
+                listed = ticks
+        if listed >= 0 and capture < 0 and (ticks - listed > 30 or ticks > 400):
+            capture = 0
+        if ticks > 600:
+            messenger.app.stop()
+        messenger.panels.body.layout().invalidate())
+    # The frame after `begin` is the one read back; the next ends the run.
+    let observed = messenger.app.on_frame(func (elapsed: float) -> unit!:
+        discard(elapsed)
+        if capture == 0:
+            capture = 1
+            probe.begin("Luced Message")
+            messenger.panels.body.layout().invalidate()
+        elif capture == 1:
+            capture = 2
+            messenger.app.stop())
+    messenger.app.run()
+    observed.disconnect()
+    messenger.app.cancel(timer)
+    probe.save(arguments[0])
+    probe.end()
+    messenger.close()
+    return 0

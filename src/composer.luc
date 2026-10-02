@@ -1,0 +1,143 @@
+## The composer: a dialog with From (the account), To, Cc, Bcc and Subject fields, the
+## plain-text body, and Send. New, Reply, Reply All and Forward open it filled in as
+## Mail does: Re:/Fwd: subjects, the original quoted under an attribution line, and a
+## reply threaded by In-Reply-To and References. Sending writes the message (built
+## by luce-mime's Draft) into the outbox and hands it to the source's engine.
+from ui import Dialog, HStack, Text, TextField, TextEditor, Button, Spacer, Font, Size
+from interop import Connection
+from reader import Shown
+from sources import Source
+import mime
+import clock
+import files
+import paths
+import time
+
+pub class Composer:
+    pub let dialog: Dialog
+    let font: Font
+    let from_line: Text
+    let to_field: TextField
+    let cc_field: TextField
+    let bcc_field: TextField
+    let subject_field: TextField
+    let editor: TextEditor
+    let notice: Text
+    var connections: list[Connection] = []
+    ## The source the message goes out through.
+    var source: Source? = none
+    var reply_id: str = ""
+    var reply_references: str = ""
+    ## Where sent messages wait for the engine.
+    let outbox: str
+    ## Called with a line for the status bar.
+    pub var on_status: func(str) -> unit!? = none
+
+    pub func init(self, font: Font, home: str) -> unit!:
+        self.font = font
+        self.outbox = paths.join(home, "outbox")
+        self.from_line = Text("", font = font, muted = true)
+        self.to_field = TextField("", font = font, placeholder = "To", cells = 60.0)
+        self.cc_field = TextField("", font = font, placeholder = "Cc", cells = 60.0)
+        self.bcc_field = TextField("", font = font, placeholder = "Bcc", cells = 60.0)
+        self.subject_field = TextField("", font = font, placeholder = "Subject", cells = 60.0)
+        self.editor = TextEditor("", line_numbers = false, font = font, wrap = true)
+        self.editor.layout().set_limits(Size(560.0, 320.0), Size(16384.0, 420.0))
+        self.notice = Text("", font = font, muted = true)
+        let send = Button("Send", font = font)
+        let cancel = Button("Cancel", font = font)
+        self.connections.append(send.on_click(self.send))
+        self.connections.append(cancel.on_click(self.cancel))
+        self.dialog = Dialog([Text("New Message", font = font), self.from_line, self.row("To", self.to_field), self.row("Cc", self.cc_field),
+                              self.row("Bcc", self.bcc_field), self.row("Subject", self.subject_field), self.editor,
+                              HStack([self.notice, Spacer(), cancel, send], spacing = 8.0)], width = 760.0)
+        self.connections.append(self.dialog.on_cancel(self.cancel))
+
+    func row(self, label: str, field: TextField) -> HStack!:
+        let caption = Text(label, font = self.font, muted = true)
+        caption.layout().set_limits(Size(70.0, 0.0), Size(70.0, 16384.0))
+        return HStack([caption, field], spacing = 8.0)
+
+    pub func is_open(self) -> bool:
+        return self.dialog.is_open()
+
+    ## Open empty, to write through `source`.
+    pub func compose(self, source: Source) -> unit!:
+        self.start(source, "", "", "", "")
+
+    ## Open as a reply to `shown`; to everyone it went to with `all`.
+    pub func reply(self, source: Source, shown: Shown, all: bool) -> unit!:
+        let to = shown.reply_to if shown.reply_to != "" else shown.sender
+        var cc = ""
+        if all:
+            var others: list[str] = []
+            for line in [shown.to, shown.cc]:
+                for address in line.split(","):
+                    let trimmed = address.trim()
+                    if trimmed != "" and not (source.address().lower() in trimmed.lower()):
+                        others.append(trimmed)
+            cc = others.join(", ")
+        self.start(source, to, cc, prefixed("Re: ", shown.subject), quoted(shown))
+        self.reply_id = shown.message_id
+        self.reply_references = shown.references
+
+    ## Open as a forward of `shown`.
+    pub func forward(self, source: Source, shown: Shown) -> unit!:
+        let header = f"\n\nBegin forwarded message:\n\nFrom: {shown.sender}\nSubject: {shown.subject}\nDate: {clock.long_date(shown.date)}\nTo: {shown.to}\n\n"
+        self.start(source, "", "", prefixed("Fwd: ", shown.subject), header + shown.body)
+
+    func start(self, source: Source, to: str, cc: str, subject: str, body: str) -> unit!:
+        self.source = source
+        self.reply_id = ""
+        self.reply_references = ""
+        self.from_line.set_text(f"From  {source.title()} <{source.address()}>")
+        self.to_field.set_text(to)
+        self.cc_field.set_text(cc)
+        self.bcc_field.set_text("")
+        self.subject_field.set_text(subject)
+        self.editor.set_text(body)
+        self.notice.set_text("")
+        self.dialog.open()
+
+    func cancel(self) -> unit!:
+        self.dialog.hide()
+
+    ## Build the message, put it in the outbox and ask the source to send it.
+    func send(self) -> unit!:
+        let source = self.source else return
+        let draft = mime.create_draft()
+        draft.set_from("", source.address())
+        var count = draft.add_recipients("to", self.to_field.text())
+        count += draft.add_recipients("cc", self.cc_field.text())
+        count += draft.add_recipients("bcc", self.bcc_field.text())
+        if count == 0:
+            self.notice.set_text("Add a recipient first.")
+            return
+        draft.set_subject(self.subject_field.text())
+        draft.set_text(self.editor.text())
+        if self.reply_id != "":
+            draft.set_reply(self.reply_id, self.reply_references)
+        let message = draft.encode()
+        files.ensure_directory(self.outbox)
+        let file = paths.join(self.outbox, f"{time.now()}.eml")
+        files.write_text(file, message)
+        var recipients: list[str] = []
+        for at in 0..<draft.recipient_count():
+            recipients.append(draft.recipient(at))
+        source.send(file, draft.sender(), recipients)
+        if let status = self.on_status:
+            status("Sending…")
+        self.dialog.hide()
+
+## `subject` with `prefix` (Re:, Fwd:) unless it has it already.
+pub func prefixed(prefix: str, subject: str) -> str:
+    if subject.lower().starts_with(prefix.lower()):
+        return subject
+    return prefix + subject
+
+## `shown`'s body quoted under an attribution line, for a reply.
+pub func quoted(shown: Shown) -> str!:
+    var text = f"\n\nOn {clock.long_date(shown.date)}, {shown.sender} wrote:\n"
+    for line in shown.body.lines():
+        text = text + "> " + line + "\n"
+    return text

@@ -1,27 +1,13 @@
-## Engine smoke check while the window is being built: sync the account in the
-## arguments and print the events.
-import mail_service
-import mail_index
-import thread
+## luced-message's entry point: run the window. `--smoke` draws three frames and
+## exits; `--home DIR` keeps settings, accounts and the store in DIR.
+from app import LuceMessage
 
 pub func main(arguments: list[str]) -> int!:
-    let home = "/tmp/luced-message-check"
-    let config = "local\t" + home + "\t127.0.0.1\t3143\tplain\talice@example.test\tsecret\t127.0.0.1\t3025\tplain\t\t"
-    let service = mail_service.start_service(config)
-    var waited = 0
-    while waited < 100:
-        let events = service.poll()
-        if events != "":
-            print(events.trim())
-        if "folders" in events and waited > 20:
-            break
-        thread.sleep(100)
-        waited += 1
-    let folders = mail_index.read_folders(home + "/local/folders")
-    for at in 0..<folders.count():
-        print(f"{folders.name(at)} {folders.total(at)} total, {folders.unseen(at)} unseen")
-        let index = mail_index.read_index(home + "/local/" + folders.key(at) + "/index")
-        for row in 0..<index.count():
-            print(f"  {index.uid(row)} {index.sender(row)}: {index.subject(row)} — {index.preview(row)}")
-    service.close()
+    var directory = ""
+    for at in 0..<arguments.length - 1:
+        if arguments[at] == "--home":
+            directory = arguments[at + 1]
+    let messenger = LuceMessage(directory)
+    messenger.run(arguments)
+    messenger.close()
     return 0

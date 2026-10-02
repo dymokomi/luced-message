@@ -1,0 +1,288 @@
+## The window: a toolbar of square icon buttons over three docked panes, Mailboxes,
+## Messages and Message, as Apple Mail lays them out, with a status line below. The
+## panels hold the sources and carry what happens between them: picking a folder fills
+## the list, picking a message fills the reader (asking its source for the body when
+## it is not stored yet), and each source's events refresh what they touch.
+from ui import VStack, HStack, Text, TextField, Font, Button, Spacer, DStack, Panel, DockPosition, Size, Application, Menu, CommandPalette, Command
+from interop import Connection
+from actions import Actions
+from accounts import Account, AccountStore, home
+from sources import Source, EmailSource, SourceEvent, seen_flag, flagged_flag, deleted_flag
+from sidebar import Sidebar
+from message_list import MessageList
+from reader import Reader
+from composer import Composer
+from account_dialog import AccountDialog
+import paths
+import mail_index
+
+pub class Panels:
+    pub let body: VStack
+    pub let actions: Actions
+    pub let sidebar: Sidebar
+    pub let messages: MessageList
+    pub let reader: Reader
+    pub let composer: Composer
+    pub let account_dialog: AccountDialog
+    pub let dock: DStack
+    let status: Text
+    let search: TextField
+    let palette: CommandPalette
+    let store: AccountStore
+    let directory: str
+    var connections: list[Connection] = []
+    pub var sources: list[Source] = []
+    var accounts: list[Account] = []
+    ## The folder shown: its source's position and its path.
+    var source: int = -1
+    var folder: str = ""
+    pub var app: Application? = none
+
+    pub func init(self, font: Font, directory: str = "") -> unit!:
+        self.directory = directory if directory != "" else home()
+        self.store = AccountStore(self.directory)
+        self.actions = Actions()
+        self.sidebar = Sidebar(font)
+        self.messages = MessageList(font)
+        self.reader = Reader(font)
+        self.composer = Composer(font, self.directory)
+        self.account_dialog = AccountDialog(font)
+        self.status = Text("", font = font, muted = true)
+        self.search = TextField("", font = font, placeholder = "Search", cells = 22.0)
+        self.palette = CommandPalette(self.actions.all, font = font)
+        self.sidebar.on_pick = self.show_folder
+        self.messages.on_pick = self.show_message
+        self.composer.on_status = self.tell
+        self.account_dialog.on_save = self.save_accounts
+        self.connections.append(self.search.on_change(func (text: str) -> unit!:
+            self.messages.set_filter(text)))
+        self.bind_actions()
+        # The toolbar: square icon buttons, grouped as Mail groups them.
+        let toolbar = HStack([Text("LUCED MESSAGE", font = font),
+                              self.tool(font, "get-mail", self.actions.get_mail), self.tool(font, "compose", self.actions.compose),
+                              self.gap(), self.tool(font, "reply", self.actions.reply), self.tool(font, "reply-all", self.actions.reply_all),
+                              self.tool(font, "forward", self.actions.forward), self.gap(),
+                              self.tool(font, "archive", self.actions.archive), self.tool(font, "trash", self.actions.delete),
+                              self.tool(font, "junk", self.actions.junk), self.gap(), self.tool(font, "flag", self.actions.flag),
+                              self.tool(font, "mail-unread", self.actions.mark_unread), Spacer(),
+                              Menu("Mailbox", [self.actions.get_mail, self.actions.compose, self.actions.accounts], font = font),
+                              Menu("Window", [self.actions.palette, self.actions.reset_layout], font = font),
+                              self.search], spacing = 4.0, padding = 4.0)
+        let mailboxes = Panel("Mailboxes", self.sidebar.view, minimum = Size(180.0, 200.0), closable = false, id = "mailboxes")
+        let messages_panel = Panel("Messages", self.messages.table, minimum = Size(320.0, 200.0), closable = false, id = "messages")
+        let message = Panel("Message", self.reader.body, minimum = Size(360.0, 200.0), closable = false, id = "message")
+        self.dock = DStack([messages_panel], font = font)
+        self.dock.add(mailboxes, messages_panel, DockPosition.left)
+        self.dock.set_fraction(mailboxes, 0.2)
+        self.dock.add(message, messages_panel, DockPosition.right)
+        self.dock.set_fraction(messages_panel, 0.45)
+        self.dock.layout().set_flex()
+        let footer = HStack([self.status], padding = 6.0)
+        self.body = VStack([toolbar, self.dock, footer, self.composer.dialog, self.account_dialog.dialog, self.palette], spacing = 0.0)
+        self.body.layout().set_flex()
+        self.actions.refresh(false)
+        self.start_sources()
+
+    func tool(self, font: Font, icon: str, command: Command) -> Button!:
+        let button = Button(icon = icon, font = font)
+        self.connections.append(button.on_click(func () -> unit!:
+            command.trigger()))
+        return button
+
+    func gap(self) -> Spacer!:
+        let spacer = Spacer()
+        spacer.layout().set_limits(Size(10.0, 0.0), Size(10.0, 0.0))
+        return spacer
+
+    func bind_actions(self) -> unit!:
+        let actions = self.actions
+        self.connections.append(actions.get_mail.on_trigger(self.get_mail))
+        self.connections.append(actions.compose.on_trigger(self.compose))
+        self.connections.append(actions.reply.on_trigger(func () -> unit!:
+            self.reply(false)))
+        self.connections.append(actions.reply_all.on_trigger(func () -> unit!:
+            self.reply(true)))
+        self.connections.append(actions.forward.on_trigger(self.forward))
+        self.connections.append(actions.delete.on_trigger(self.delete))
+        self.connections.append(actions.delete_back.on_trigger(self.delete))
+        self.connections.append(actions.archive.on_trigger(func () -> unit!:
+            self.file_to("archive")))
+        self.connections.append(actions.junk.on_trigger(func () -> unit!:
+            self.file_to("junk")))
+        self.connections.append(actions.flag.on_trigger(self.toggle_flag))
+        self.connections.append(actions.mark_unread.on_trigger(self.mark_unread))
+        self.connections.append(actions.accounts.on_trigger(func () -> unit!:
+            self.account_dialog.open(self.accounts)))
+        self.connections.append(actions.palette.on_trigger(func () -> unit!:
+            self.palette.open()))
+        self.connections.append(actions.quit.on_trigger(func () -> unit!:
+            if let app = self.app:
+                app.stop()))
+
+    # mark: sources ==============================================================================
+
+    ## Start a source for every account; ask for one when there are none.
+    func start_sources(self) -> unit!:
+        self.accounts = self.store.load()
+        if self.store.warning != "":
+            self.tell(self.store.warning)
+        let store = paths.join(self.directory, "store")
+        for account in self.accounts:
+            self.sources.append(EmailSource(account, store))
+        self.sidebar.refresh(self.sources)
+        if self.sources.length == 0:
+            self.tell("No accounts yet: Mailbox › Accounts… adds one.")
+        else:
+            self.sidebar.pick(0, "")
+
+    ## Save the accounts and restart every source with them.
+    func save_accounts(self, accounts: list[Account]) -> unit!:
+        self.store.save(accounts)
+        for source in self.sources:
+            source.close()
+        self.sources = []
+        self.source = -1
+        self.folder = ""
+        self.messages.clear()
+        self.reader.clear()
+        self.start_sources()
+
+    func current(self) -> Source?:
+        if self.source < 0 or self.source >= self.sources.length:
+            return none
+        return self.sources[self.source]
+
+    ## Take in every source's events; called every frame.
+    pub func poll(self) -> unit!:
+        self.sidebar.poll()
+        self.messages.poll()
+        for position in 0..<self.sources.length:
+            let source = self.sources[position]
+            let events = source.poll() catch failure:
+                self.tell(failure.message)
+                recover []
+            for event in events:
+                self.apply(position, source, event)
+
+    func apply(self, position: int, source: Source, event: SourceEvent) -> unit!:
+        match event.kind:
+            "folders":
+                self.sidebar.refresh(self.sources)
+                if self.source < 0:
+                    self.sidebar.pick(position, "")
+            "folder":
+                if position == self.source and event.folder == self.folder:
+                    self.messages.show(source.messages(self.folder))
+            "body":
+                if let shown = self.reader.shown:
+                    if shown.source == position and shown.folder == event.folder and shown.uid == event.uid and shown.file == "":
+                        self.show_message(event.uid)
+            "status":
+                self.tell(f"{source.title()}: {event.text}" if event.text != "" else "")
+            "online":
+                self.tell(f"{source.title()}: connected")
+            "offline":
+                self.tell(f"{source.title()}: offline — {event.text}")
+            "sent":
+                self.tell("Message sent.")
+            "unsent":
+                self.tell(f"Not sent: {event.text}")
+            _:
+                if event.text != "":
+                    self.tell(event.text)
+
+    pub func tell(self, text: str) -> unit!:
+        self.status.set_text(text)
+
+    # mark: picking ==============================================================================
+
+    func show_folder(self, source: int, folder: str) -> unit!:
+        self.source = source
+        self.folder = folder
+        let shown = self.current() else return
+        self.reader.clear()
+        self.messages.show(shown.messages(folder))
+
+    func show_message(self, uid: int) -> unit!:
+        self.actions.refresh(uid >= 0)
+        let source = self.current() else return
+        if uid < 0:
+            self.reader.clear()
+            return
+        let file = source.message_file(self.folder, uid)
+        if file == "":
+            self.reader.loading(self.source, self.folder, uid)
+            source.fetch(self.folder, uid)
+            return
+        self.reader.show(self.source, self.folder, uid, file)
+        if not mail_index.has(self.messages.picked_flags(), seen_flag):
+            source.set_flags(self.folder, [uid], true, seen_flag)
+
+    # mark: actions ==============================================================================
+
+    func get_mail(self) -> unit!:
+        for source in self.sources:
+            source.refresh()
+        self.tell("Checking for mail…")
+
+    func compose(self) -> unit!:
+        if let source = self.current():
+            self.composer.compose(source)
+        else:
+            self.tell("Add an account first: Mailbox › Accounts…")
+
+    func reply(self, all: bool) -> unit!:
+        let source = self.current() else return
+        let shown = self.reader.shown else return
+        if shown.file == "":
+            return
+        self.composer.reply(source, shown, all)
+
+    func forward(self) -> unit!:
+        let source = self.current() else return
+        let shown = self.reader.shown else return
+        if shown.file == "":
+            return
+        self.composer.forward(source, shown)
+
+    ## Move the picked message to Trash, or mark it deleted when there is no Trash.
+    func delete(self) -> unit!:
+        let source = self.current() else return
+        let uid = self.messages.picked_uid()
+        if uid < 0:
+            return
+        self.messages.pick_next()
+        if not source.move_to(self.folder, [uid], "trash"):
+            source.set_flags(self.folder, [uid], true, deleted_flag)
+
+    ## Move the picked message to the folder with `role` (archive, junk).
+    func file_to(self, role: str) -> unit!:
+        let source = self.current() else return
+        let uid = self.messages.picked_uid()
+        if uid < 0:
+            return
+        self.messages.pick_next()
+        if not source.move_to(self.folder, [uid], role):
+            self.tell(f"This account has no {role} folder.")
+
+    func toggle_flag(self) -> unit!:
+        let source = self.current() else return
+        let uid = self.messages.picked_uid()
+        if uid < 0:
+            return
+        let flagged = mail_index.has(self.messages.picked_flags(), flagged_flag)
+        source.set_flags(self.folder, [uid], not flagged, flagged_flag)
+
+    func mark_unread(self) -> unit!:
+        let source = self.current() else return
+        let uid = self.messages.picked_uid()
+        if uid < 0:
+            return
+        source.set_flags(self.folder, [uid], false, seen_flag)
+
+    pub func close(self):
+        for source in self.sources:
+            source.close()
+        for connection in self.connections:
+            connection.disconnect()
+        self.connections.clear()

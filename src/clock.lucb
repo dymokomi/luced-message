@@ -1,0 +1,105 @@
+## Dates as the window shows them, in the user's local time: a message list's short
+## form (`20:34` today, `Thu` this week, `2 Oct` this year, `2 Oct 2025` before) and a
+## reader's long form (`Fri 2 Oct 2026 20:34`). The local offset comes from the C
+## library (localtime_r's tm_gmtoff); on Windows times are shown in UTC for now.
+import platform
+import time
+from engine_text import Buffer
+import mime
+
+## The C library's broken-down time on 64-bit POSIX systems.
+struct Tm:
+    var second: i32
+    var minute: i32
+    var hour: i32
+    var day: i32
+    var month: i32
+    var year: i32
+    var weekday: i32
+    var year_day: i32
+    var dst: i32
+    var offset: i64
+    var zone: void*?
+
+extern func localtime_r(seconds: const i64*, result: Tm*) -> Tm*?
+
+let weekdays: str[7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+let months: str[12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+## The text the last call formatted; the caller copies it.
+var formatted: Buffer
+
+## The local offset from UTC in seconds at moment `seconds`.
+pub func local_offset(seconds: i64) -> i64:
+    if platform.windows:
+        return 0
+    var moment = seconds
+    var broken: Tm
+    if localtime_r(&moment, &broken) == none:
+        return 0
+    return broken.offset
+
+## The local calendar day, weekday and time of `seconds`.
+struct LocalTime:
+    var year: i64
+    var month: i64
+    var day: i64
+    var weekday: i64
+    var days: i64
+    var minute_of_day: i64
+
+func local_time(seconds: i64) -> LocalTime:
+    let wall = seconds + local_offset(seconds)
+    var days = wall // 86400
+    var rest = wall % 86400
+    if rest < 0:
+        rest += 86400
+        days -= 1
+    let (year, month, day) = mime.civil_from_days(days)
+    return LocalTime(year = year, month = month, day = day, weekday = ((days % 7) + 11) % 7, days = days, minute_of_day = rest // 60)
+
+func two_digits(value: i64) -> !:
+    if value < 10:
+        try formatted.byte('0')
+    try formatted.number(value)
+
+## The short form of `seconds` for a message list, relative to now.
+pub func list_date(seconds: i64) -> str!:
+    formatted.clear()
+    if seconds <= 0:
+        return ""
+    let moment = local_time(seconds)
+    let today = local_time(time.unix())
+    if moment.days == today.days:
+        try two_digits(moment.minute_of_day // 60)
+        try formatted.byte(':')
+        try two_digits(moment.minute_of_day % 60)
+    elif today.days - moment.days < 7 and today.days > moment.days:
+        try formatted.text(weekdays[(usize)moment.weekday])
+    else:
+        try formatted.number(moment.day)
+        try formatted.byte(' ')
+        try formatted.text(months[(usize)(moment.month - 1)])
+        if moment.year != today.year:
+            try formatted.byte(' ')
+            try formatted.number(moment.year)
+    return formatted.text_view()
+
+## The long form of `seconds` for a reader's header.
+pub func long_date(seconds: i64) -> str!:
+    formatted.clear()
+    if seconds <= 0:
+        return ""
+    let moment = local_time(seconds)
+    try formatted.text(weekdays[(usize)moment.weekday])
+    try formatted.byte(' ')
+    try formatted.number(moment.day)
+    try formatted.byte(' ')
+    try formatted.text(months[(usize)(moment.month - 1)])
+    try formatted.byte(' ')
+    try formatted.number(moment.year)
+    try formatted.byte(' ')
+    try two_digits(moment.minute_of_day // 60)
+    try formatted.byte(':')
+    try two_digits(moment.minute_of_day % 60)
+    return formatted.text_view()

@@ -1,0 +1,12 @@
+## Folder roles from special-use bits and from common names.
+from sources import role_of
+
+pub func run() -> unit!:
+    assert(role_of("INBOX", 0) == "inbox")
+    assert(role_of("Whatever", 8192) == "sent")
+    assert(role_of("[Gmail]/All Mail", 256) == "all")
+    assert(role_of("Sent Items", 0) == "sent")
+    assert(role_of("INBOX.Trash", 0) == "trash")
+    assert(role_of("Deleted Messages", 0) == "trash")
+    assert(role_of("Spam", 0) == "junk")
+    assert(role_of("Projects", 0) == "")

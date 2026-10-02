@@ -1,0 +1,136 @@
+## The Accounts dialog: add an email account (name, address, password, the IMAP and
+## SMTP servers with their ports and security) or change the one shown. Saving
+## writes accounts.toml and restarts the account's source.
+from ui import Dialog, VStack, HStack, Text, TextField, Button, Spacer, Font, Size, ListView, ListItem, Widget
+from interop import Connection
+from accounts import Account, account_id
+
+pub class AccountDialog:
+    pub let dialog: Dialog
+    let font: Font
+    let picker: ListView
+    let name_field: TextField
+    let address_field: TextField
+    let user_field: TextField
+    let password_field: TextField
+    let imap_host: TextField
+    let imap_port: TextField
+    let imap_security: TextField
+    let smtp_host: TextField
+    let smtp_port: TextField
+    let smtp_security: TextField
+    let notice: Text
+    var connections: list[Connection] = []
+    var accounts: list[Account] = []
+    ## The account being edited; -1 for a new one.
+    var editing: int = -1
+    ## Called with the accounts once one is saved.
+    pub var on_save: func(list[Account]) -> unit!? = none
+
+    pub func init(self, font: Font) -> unit!:
+        self.font = font
+        self.picker = ListView([], font = font)
+        self.picker.layout().set_limits(Size(180.0, 300.0), Size(180.0, 300.0))
+        self.connections.append(self.picker.on_activate(func (at: int) -> unit!:
+            self.edit(at)))
+        self.name_field = TextField("", font = font, placeholder = "Work", cells = 32.0)
+        self.address_field = TextField("", font = font, placeholder = "alice@example.com", cells = 32.0)
+        self.user_field = TextField("", font = font, placeholder = "the address, usually", cells = 32.0)
+        self.password_field = TextField("", font = font, placeholder = "an app password", cells = 32.0)
+        self.imap_host = TextField("", font = font, placeholder = "imap.example.com", cells = 24.0)
+        self.imap_port = TextField("993", font = font, cells = 6.0)
+        self.imap_security = TextField("tls", font = font, cells = 9.0)
+        self.smtp_host = TextField("", font = font, placeholder = "smtp.example.com", cells = 24.0)
+        self.smtp_port = TextField("587", font = font, cells = 6.0)
+        self.smtp_security = TextField("starttls", font = font, cells = 9.0)
+        self.notice = Text("Security: tls, starttls or plain (plain only for a local test server).", font = font, muted = true)
+        let add = Button("Add Account", font = font)
+        let save = Button("Save", font = font)
+        let close = Button("Close", font = font)
+        self.connections.append(add.on_click(func () -> unit!:
+            self.edit(-1)))
+        self.connections.append(save.on_click(self.save))
+        self.connections.append(close.on_click(func () -> unit!:
+            self.dialog.hide()))
+        let form = VStack([self.row("Name", self.name_field), self.row("Address", self.address_field),
+                           self.row("User", self.user_field), self.row("Password", self.password_field),
+                           self.row("IMAP", HStack([self.imap_host, self.imap_port, self.imap_security], spacing = 6.0)),
+                           self.row("SMTP", HStack([self.smtp_host, self.smtp_port, self.smtp_security], spacing = 6.0)),
+                           self.notice, Spacer()], spacing = 8.0)
+        self.dialog = Dialog([Text("Accounts", font = font), HStack([VStack([self.picker, add], spacing = 6.0), form], spacing = 12.0),
+                              HStack([Spacer(), close, save], spacing = 8.0)], width = 760.0)
+        self.connections.append(self.dialog.on_cancel(func () -> unit!:
+            self.dialog.hide()))
+
+    func row(self, label: str, control: Widget) -> HStack!:
+        let caption = Text(label, font = self.font, muted = true)
+        caption.layout().set_limits(Size(80.0, 0.0), Size(80.0, 16384.0))
+        return HStack([caption, control], spacing = 8.0)
+
+    ## Open on `accounts`, editing the first or a new one.
+    pub func open(self, accounts: list[Account]) -> unit!:
+        self.accounts = accounts
+        var items: list[ListItem] = []
+        for account in accounts:
+            items.append(ListItem(text = account.title()))
+        self.picker.set_items(items)
+        self.edit(0 if accounts.length > 0 else -1)
+        self.dialog.open()
+
+    func edit(self, at: int) -> unit!:
+        self.editing = at if at >= 0 and at < self.accounts.length else -1
+        let account = self.accounts[self.editing] if self.editing >= 0 else Account("")
+        self.name_field.set_text(account.name)
+        self.address_field.set_text(account.address)
+        self.user_field.set_text(account.user)
+        self.password_field.set_text(account.password)
+        self.imap_host.set_text(account.imap_host)
+        self.imap_port.set_text(f"{account.imap_port}")
+        self.imap_security.set_text(account.imap_security)
+        self.smtp_host.set_text(account.smtp_host)
+        self.smtp_port.set_text(f"{account.smtp_port}")
+        self.smtp_security.set_text(account.smtp_security)
+
+    func save(self) -> unit!:
+        let address = self.address_field.text().trim()
+        if address == "" or self.imap_host.text().trim() == "":
+            self.notice.set_text("An account needs an address and an IMAP server.")
+            return
+        var account = Account("")
+        if self.editing >= 0:
+            account = self.accounts[self.editing]
+        else:
+            var taken: list[str] = []
+            for existing in self.accounts:
+                taken.append(existing.id)
+            account = Account(account_id(address, taken))
+            self.accounts.append(account)
+        account.name = self.name_field.text().trim()
+        account.address = address
+        let user = self.user_field.text().trim()
+        account.user = user if user != "" else address
+        account.password = self.password_field.text()
+        account.imap_host = self.imap_host.text().trim()
+        account.imap_port = port(self.imap_port.text(), 993)
+        account.imap_security = security(self.imap_security.text(), "tls")
+        account.smtp_host = self.smtp_host.text().trim()
+        account.smtp_port = port(self.smtp_port.text(), 587)
+        account.smtp_security = security(self.smtp_security.text(), "starttls")
+        if let saved = self.on_save:
+            saved(self.accounts)
+        self.dialog.hide()
+
+## A port number from `text`, or `fallback`.
+func port(text: str, fallback: int) -> int:
+    var value = 0
+    for character in text.trim():
+        let digit = "0123456789".index_of(character) else return fallback
+        value = value * 10 + digit
+        if value > 65535:
+            return fallback
+    return value if value > 0 else fallback
+
+## A security name from `text`, or `fallback`.
+func security(text: str, fallback: str) -> str:
+    let name = text.trim().lower()
+    return name if name in ["tls", "starttls", "plain"] else fallback

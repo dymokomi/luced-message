@@ -1,0 +1,13 @@
+## Reply subjects and quoting.
+from composer import prefixed, quoted
+from reader import Shown
+
+pub func run() -> unit!:
+    assert(prefixed("Re: ", "Lunch") == "Re: Lunch")
+    assert(prefixed("Re: ", "RE: Lunch") == "RE: Lunch")
+    let shown = Shown(0, "INBOX", 7)
+    shown.sender = "Bob <bob@example.test>"
+    shown.body = "one\ntwo"
+    let text = quoted(shown)
+    assert("Bob <bob@example.test> wrote:" in text)
+    assert(text.ends_with("> one\n> two\n"))

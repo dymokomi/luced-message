@@ -11,6 +11,8 @@ from mail_store import Index, Row, Folder
 ## A folder's messages, as the store has them, sorted by UID.
 pub struct MessageIndex:
     var index: Index
+    ## Positions newest first: by date, then by UID.
+    var order: Records[u32]
 
     ## How many messages there are.
     pub func count() -> i64:
@@ -51,8 +53,57 @@ pub struct MessageIndex:
         let at = self.index.find((u32)uid) else return -1
         return (i64)at
 
+    ## The position of the `nth` newest message.
+    pub func newest(nth: i64) -> i64:
+        if nth < 0 or nth >= (i64)self.order.length():
+            trap("no message at that place in the order")
+        return (i64)self.order.at((usize)nth)
+
+    ## Order the positions newest first (a merge sort: stable, and fast on the mostly
+    ## sorted orders mailboxes have).
+    mutating func sort() -> !:
+        let count = self.index.rows.length()
+        self.order.clear()
+        for at in 0..<count:
+            try self.order.add((u32)at)
+        if count < 2:
+            return
+        let scratch = try alloc u32[count] in memory.heap
+        defer free(scratch) in memory.heap
+        var width: usize = 1
+        while width < count:
+            var start: usize = 0
+            while start < count:
+                let middle = start + width if start + width < count else count
+                let end = start + 2 * width if start + 2 * width < count else count
+                var left = start
+                var right = middle
+                var out = start
+                while out < end:
+                    let take_left = right >= end or (left < middle and not self.newer(self.order.at(right), self.order.at(left)))
+                    if take_left:
+                        scratch[out] = self.order.at(left)
+                        left += 1
+                    else:
+                        scratch[out] = self.order.at(right)
+                        right += 1
+                    out += 1
+                start = end
+            for at in 0..<count:
+                self.order.set(at, scratch[at])
+            width *= 2
+
+    ## Whether the row at `a` is newer than the row at `b`.
+    func newer(a: u32, b: u32) -> bool:
+        let first = self.index.rows.at((usize)a)
+        let second = self.index.rows.at((usize)b)
+        if first.date != second.date:
+            return first.date > second.date
+        return first.uid > second.uid
+
     pub mutating func close():
         self.index.close()
+        self.order.close()
 
 pub let message_index_type: interop.Type[MessageIndex] = interop.Type[MessageIndex]("Message index", MessageIndex.close, closeable = true)
 
@@ -63,6 +114,7 @@ pub func read_index(path: str) -> interop.Reference[MessageIndex]!:
     try name.text(path)
     let native = try new MessageIndex(index = try Index.load(try name.terminated())) in memory.heap
     errdefer free(native) in memory.heap
+    try native.sort()
     return try interop.Reference[MessageIndex].adopt(native, message_index_type)
 
 ## The folders of one account, as the engine listed them.
@@ -91,6 +143,29 @@ pub struct FolderList:
     ## 8192 sent, 16384 trash.
     pub func flags(at: i64) -> i64:
         return (i64)self.folder(at).flags
+    ## How many levels down folder `at` is: the delimiters in its path.
+    pub func depth(at: i64) -> i64:
+        let folder = self.folder(at)
+        if folder.delimiter == 0:
+            return 0
+        var count: i64 = 0
+        for byte in folder.path.bytes:
+            if byte == folder.delimiter:
+                count += 1
+        return count
+
+    ## The last part of folder `at`'s name: `2026` for `Archive/2026`.
+    pub func leaf(at: i64) -> str:
+        let folder = self.folder(at)
+        if folder.delimiter == 0:
+            return folder.name
+        let data = folder.name.bytes
+        var start: usize = 0
+        for index in 0..<data.length:
+            if data[index] == folder.delimiter:
+                start = index + 1
+        return (str)data[start..]
+
     ## The folder's directory name in the store.
     pub func key(at: i64) -> str:
         return self.folder(at).key
@@ -148,3 +223,17 @@ func read_folder_lines(bytes: const u8[], list: FolderList*) -> !:
         let key = try list.text.keep_text(fields.raw(4))
         try list.folders.add(Folder(path = path, name = name, delimiter = (u8)fields.number(2), flags = (u32)fields.number(3),
                                     key = key, total = (u32)fields.number(5), unseen = (u32)fields.number(6)))
+
+## Whether a file or directory exists at `path`.
+pub func exists(path: str) -> bool:
+    var name: Buffer
+    defer name.close()
+    name.text(path) catch failure:
+        return false
+    let file = name.terminated() catch failure:
+        return false
+    return files.exists(file)
+
+## Whether flag word `flags` has every bit of `bit` set: Luce has no bit operations.
+pub func has(flags: i64, bit: i64) -> bool:
+    return (flags & bit) == bit

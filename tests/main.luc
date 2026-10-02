@@ -1,0 +1,68 @@
+## luced-message's headless tests: accounts, the store as the window reads it, folder
+## roles and the composer's reply text. Run by tests/run.py with a scratch directory.
+from accounts import Account, AccountStore, account_id, escape
+import mail_index
+import clock
+import files
+import paths
+import sources_tests
+import composer_tests
+
+func check(condition: bool, what: str):
+    assert(condition, what)
+
+func accounts_round_trip(directory: str) -> unit!:
+    let store = AccountStore(directory)
+    let work = Account("work")
+    work.name = "Work"
+    work.address = "alice@example.com"
+    work.imap_host = "imap.example.com"
+    work.smtp_host = "smtp.example.com"
+    work.user = "alice@example.com"
+    work.password = "pa\"ss\\word"
+    let local = Account("local")
+    local.address = "bob@example.test"
+    local.imap_host = "127.0.0.1"
+    local.imap_port = 3143
+    local.imap_security = "plain"
+    store.save([work, local])
+    let loaded = store.load()
+    check(store.warning == "", f"accounts read back: {store.warning}")
+    check(loaded.length == 2, "two accounts")
+    check(loaded[0].id == "work" and loaded[0].password == "pa\"ss\\word", "the password survives quoting")
+    check(loaded[1].imap_port == 3143 and loaded[1].imap_security == "plain", "ports and security")
+    check(loaded[1].title() == "bob@example.test", "a title falls back to the address")
+    check(account_id("Alice.Smith@Example.com", ["alice_smith_example_com"]) == "alice_smith_example_com_2", "ids are unique")
+    check(escape("a\tb\\c\nd") == "a\\tb\\\\c\\nd", "engine fields are escaped")
+    let line = work.engine_line("/store")
+    check(line.split("\t").length == 12, "the engine line has twelve fields")
+
+func index_reading(directory: str) -> unit!:
+    let path = paths.join(directory, "index")
+    files.write_text(path, "luced-message index 1\t7\t12\t0\n3\t1\t1000\t10\t0\tAlice\tOld\tid3\t\t\n5\t0\t3000\t20\t1\tBob\tNew\\tTabbed\tid5\tid3\tHello\n9\t4\t2000\t30\t0\tCarol\tMiddle\tid9\t\tA\\nB\n")
+    let index = mail_index.read_index(path)
+    check(index.count() == 3, "three rows")
+    check(index.uid(index.newest(0)) == 5 and index.uid(index.newest(1)) == 9 and index.uid(index.newest(2)) == 3, "newest first by date")
+    let bob = index.position(5)
+    check(index.subject(bob) == "New\tTabbed" and index.in_reply_to(bob) == "id3" and index.attachment(bob), "fields unescaped")
+    check(index.preview(index.position(9)) == "A\nB", "newlines unescaped")
+    check(mail_index.has(index.flags(index.position(9)), 4) and not mail_index.has(index.flags(bob), 1), "flag bits")
+    check(index.position(4) == -1, "a missing UID")
+    let none_here = mail_index.read_index(paths.join(directory, "missing"))
+    check(none_here.count() == 0, "no file reads as empty")
+    let folders_path = paths.join(directory, "folders")
+    files.write_text(folders_path, "luced-message folders 1\nINBOX\tINBOX\t47\t0\tk1\t5\t2\nArchive/2026\tArchive/2026\t47\t512\tk2\t9\t0\n")
+    let folders = mail_index.read_folders(folders_path)
+    check(folders.count() == 2 and folders.unseen(0) == 2, "folders read")
+    check(folders.depth(1) == 1 and folders.leaf(1) == "2026" and folders.key(1) == "k2", "depth and leaf")
+
+pub func main(arguments: list[str]) -> int!:
+    let directory = arguments[0] if arguments.length > 0 else "/tmp/luced-message-tests"
+    files.ensure_directory(directory)
+    accounts_round_trip(directory)
+    index_reading(directory)
+    sources_tests.run()
+    composer_tests.run()
+    check(clock.list_date(0) == "", "no date")
+    print("PASS luced-message")
+    return 0

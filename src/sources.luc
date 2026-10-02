@@ -1,0 +1,195 @@
+## Where messages come from. The window knows only Source: folders, the messages in a
+## folder, a message's file, and actions on messages. EmailSource is the first kind:
+## an IMAP/SMTP account served by a mail engine on its own thread (mail_service),
+## whose store the window reads. Other kinds (JMAP, Matrix, RSS) implement the same
+## interface over their own engines.
+from accounts import Account, escape
+import mail_service
+from mail_service import MailService
+import mail_index
+from mail_index import MessageIndex
+import paths
+
+## Message flag bits, as the store keeps them (imap.Flags).
+pub let seen_flag: int = 1
+pub let answered_flag: int = 2
+pub let flagged_flag: int = 4
+pub let deleted_flag: int = 8
+pub let draft_flag: int = 16
+pub let forwarded_flag: int = 64
+pub let junk_flag: int = 128
+
+## A folder as the window shows it.
+pub struct FolderInfo:
+    ## The source's own name for it, used in actions.
+    pub let path: str
+    pub let name: str
+    ## inbox, sent, drafts, trash, junk, archive, all, flagged, or "".
+    pub let role: str
+    pub let depth: int
+    pub let total: int
+    pub let unseen: int
+
+## Something a source has to tell the window.
+pub struct SourceEvent:
+    ## online, offline, status, folders, folder, body, sent, unsent, error.
+    pub let kind: str
+    pub let folder: str = ""
+    pub let uid: int = 0
+    pub let text: str = ""
+
+pub interface Source:
+    func id(self) -> str
+    func title(self) -> str
+    func address(self) -> str
+    func folders(self) -> list[FolderInfo]!
+    func messages(self, folder: str) -> MessageIndex!
+    ## The path of message `uid`'s file, or "" when it is not fetched yet (see `fetch`).
+    func message_file(self, folder: str, uid: int) -> str!
+    func fetch(self, folder: str, uid: int) -> unit!
+    func set_flags(self, folder: str, uids: list[int], add: bool, bits: int) -> unit!
+    ## Move messages to the folder with `role` (trash, junk, archive); false when the
+    ## source has no such folder.
+    func move_to(self, folder: str, uids: list[int], role: str) -> bool!
+    func send(self, file: str, sender: str, recipients: list[str]) -> unit!
+    func refresh(self) -> unit!
+    func poll(self) -> list[SourceEvent]!
+    func close(self)
+
+## The role of a folder from its special-use bits (RFC 6154), else from the names
+## servers without them use.
+pub func role_of(name: str, flags: int) -> str:
+    if name.upper() == "INBOX":
+        return "inbox"
+    let bits = [(8192, "sent"), (1024, "drafts"), (16384, "trash"), (4096, "junk"), (512, "archive"), (256, "all"), (2048, "flagged")]
+    for (bit, role) in bits:
+        if mail_index.has(flags, bit):
+            return role
+    let parts = name.replace(".", "/").split("/")
+    let leaf = parts[parts.length - 1].lower()
+    let names = [("sent", "sent"), ("sent items", "sent"), ("sent messages", "sent"), ("sent mail", "sent"),
+                 ("drafts", "drafts"), ("trash", "trash"), ("deleted items", "trash"), ("deleted messages", "trash"),
+                 ("bin", "trash"), ("junk", "junk"), ("spam", "junk"), ("junk e-mail", "junk"), ("archive", "archive"),
+                 ("archives", "archive")]
+    for (known, role) in names:
+        if leaf == known:
+            return role
+    return ""
+
+## An email account: IMAP to read, SMTP to send.
+pub class EmailSource: Source:
+    let account: Account
+    let store: str
+    let service: MailService
+    ## Folder paths by role, from the last folder list.
+    var roles: map[str, str] = {}
+    ## Folder store keys by path.
+    var keys: map[str, str] = {}
+
+    pub func init(self, account: Account, store: str) -> unit!:
+        self.account = account
+        self.store = store
+        self.service = mail_service.start_service(account.engine_line(store))
+
+    pub func id(self) -> str:
+        return self.account.id
+
+    pub func title(self) -> str:
+        return self.account.title()
+
+    pub func address(self) -> str:
+        return self.account.address
+
+    pub func folders(self) -> list[FolderInfo]!:
+        let listing = mail_index.read_folders(paths.join(paths.join(self.store, self.account.id), "folders"))
+        var result: list[FolderInfo] = []
+        self.roles = {}
+        self.keys = {}
+        for at in 0..<listing.count():
+            let path = listing.path(at)
+            let role = role_of(path, listing.flags(at))
+            let depth = listing.depth(at)
+            let name = listing.leaf(at)
+            if role != "" and not (role in self.roles):
+                self.roles[role] = path
+            self.keys[path] = listing.key(at)
+            result.append(FolderInfo(path = path, name = "Inbox" if role == "inbox" else name, role = role, depth = depth,
+                                     total = listing.total(at), unseen = listing.unseen(at)))
+        return result
+
+    func folder_directory(self, folder: str) -> str!:
+        let key = self.keys[folder] else ""
+        return paths.join(paths.join(self.store, self.account.id), key)
+
+    pub func messages(self, folder: str) -> MessageIndex!:
+        return mail_index.read_index(paths.join(self.folder_directory(folder), "index"))
+
+    pub func message_file(self, folder: str, uid: int) -> str!:
+        if not (folder in self.keys):
+            return ""
+        let path = paths.join(self.folder_directory(folder), f"{uid}.eml")
+        return path if mail_index.exists(path) else ""
+
+    pub func fetch(self, folder: str, uid: int) -> unit!:
+        self.service.submit(f"body\t{escape(folder)}\t{uid}")
+
+    pub func set_flags(self, folder: str, uids: list[int], add: bool, bits: int) -> unit!:
+        self.service.submit(f"flags\t{escape(folder)}\t{uid_set(uids)}\t{1 if add else 0}\t{bits}")
+
+    pub func move_to(self, folder: str, uids: list[int], role: str) -> bool!:
+        let target = self.roles[role] else return false
+        if target == folder:
+            return false
+        self.service.submit(f"move\t{escape(folder)}\t{uid_set(uids)}\t{escape(target)}")
+        return true
+
+    pub func send(self, file: str, sender: str, recipients: list[str]) -> unit!:
+        let joined = recipients.join(",")
+        self.service.submit(f"send\t{escape(file)}\t{escape(sender)}\t{escape(joined)}")
+
+    pub func refresh(self) -> unit!:
+        self.service.submit("sync")
+
+    pub func poll(self) -> list[SourceEvent]!:
+        var events: list[SourceEvent] = []
+        let text = self.service.poll()
+        if text == "":
+            return events
+        for line in text.lines():
+            let fields = line.split("\t")
+            let kind = fields[0]
+            if kind == "folder":
+                events.append(SourceEvent(kind = kind, folder = unescape(fields[1])))
+            elif kind == "body":
+                events.append(SourceEvent(kind = kind, folder = unescape(fields[1]), uid = int(fields[2])))
+            elif fields.length > 1:
+                events.append(SourceEvent(kind = kind, text = unescape(fields[1])))
+            else:
+                events.append(SourceEvent(kind = kind))
+        return events
+
+    pub func close(self):
+        self.service.close()
+
+## UIDs as a comma-separated set.
+func uid_set(uids: list[int]) -> str:
+    var parts: list[str] = []
+    for uid in uids:
+        parts.append(f"{uid}")
+    return parts.join(",")
+
+## An engine field with its escapes undone.
+func unescape(text: str) -> str:
+    if not ("\\" in text):
+        return text
+    var out = ""
+    var escaped = false
+    for character in text:
+        if escaped:
+            out = out + ("\t" if character == "t" else ("\n" if character == "n" else ("\r" if character == "r" else character)))
+            escaped = false
+        elif character == "\\":
+            escaped = true
+        else:
+            out = out + character
+    return out

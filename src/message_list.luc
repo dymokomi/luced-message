@@ -1,0 +1,106 @@
+## The message list: one folder's messages in the classic Mail layout, newest first by date,
+## with columns for the unread dot, the flag, the attachment clip, the sender, the
+## subject and the date. Unread rows are bold; flagged ones carry a yellow flag. A
+## filter narrows the rows to those whose sender or subject holds its text.
+from ui import TableView, TableColumn, TableCell, CellAlign, Font
+from mail_index import MessageIndex
+import clock
+import mail_index
+import theme
+from sources import seen_flag, flagged_flag
+
+pub class MessageList:
+    pub let table: TableView
+    var index: MessageIndex? = none
+    ## Index positions of the rows shown, in display order.
+    var rows: list[int] = []
+    var filter: str = ""
+    var shown_uid: int = -1
+    ## Called with the UID of the message picked, or -1 when none is.
+    pub var on_pick: func(int) -> unit!? = none
+
+    pub func init(self, font: Font) -> unit!:
+        let columns = [TableColumn(title = "", width = 28.0, minimum = 28.0, align = CellAlign.center),
+                       TableColumn(title = "", width = 28.0, minimum = 28.0, align = CellAlign.center),
+                       TableColumn(title = "", width = 28.0, minimum = 28.0, align = CellAlign.center),
+                       TableColumn(title = "From", width = 190.0),
+                       TableColumn(title = "Subject", weight = 1.0),
+                       TableColumn(title = "Date", width = 110.0, align = CellAlign.right)]
+        self.table = TableView(columns, [], font = font)
+
+    ## Show `index`'s messages, keeping the picked message when it is still there.
+    pub func show(self, index: MessageIndex) -> unit!:
+        self.index = index
+        self.rebuild()
+
+    ## Show no folder.
+    pub func clear(self) -> unit!:
+        self.index = none
+        self.rebuild()
+
+    ## Narrow the rows to those whose sender or subject holds `text` (any case).
+    pub func set_filter(self, text: str) -> unit!:
+        self.filter = text.trim().lower()
+        self.rebuild()
+
+    func rebuild(self) -> unit!:
+        var cells: list[TableCell] = []
+        var rows: list[int] = []
+        var keep = -1
+        if let index = self.index:
+            for nth in 0..<index.count():
+                let at = index.newest(nth)
+                if self.filter == "" or self.filter in index.sender(at).lower() or self.filter in index.subject(at).lower():
+                    let flags = index.flags(at)
+                    let unread = not mail_index.has(flags, seen_flag)
+                    let flagged = mail_index.has(flags, flagged_flag)
+                    if index.uid(at) == self.shown_uid:
+                        keep = rows.length
+                    rows.append(at)
+                    cells.append(TableCell(text = "●" if unread else "", tint = theme.unread()))
+                    cells.append(TableCell(text = "⚑" if flagged else "", tint = theme.flag()))
+                    cells.append(TableCell(text = "@" if index.attachment(at) else "", muted = true))
+                    let sender = index.sender(at)
+                    cells.append(TableCell(text = sender if sender != "" else "(no sender)", emphasis = unread))
+                    let subject = index.subject(at)
+                    cells.append(TableCell(text = subject if subject != "" else "(no subject)", emphasis = unread))
+                    cells.append(TableCell(text = clock.list_date(index.date(at)), muted = true))
+        self.rows = rows
+        self.table.set_rows(cells)
+        if keep >= 0:
+            self.table.select(keep)
+        else:
+            self.shown_uid = -1
+            if let pick = self.on_pick:
+                pick(-1)
+
+    ## The UID of the picked message, or -1.
+    pub func picked_uid(self) -> int:
+        let index = self.index else return -1
+        let at = self.table.selected_index()
+        if at < 0 or at >= self.rows.length:
+            return -1
+        return index.uid(self.rows[at])
+
+    ## The picked message's flags, or 0.
+    pub func picked_flags(self) -> int:
+        let index = self.index else return 0
+        let at = self.table.selected_index()
+        if at < 0 or at >= self.rows.length:
+            return 0
+        return index.flags(self.rows[at])
+
+    ## Pick the next row after a message leaves the list (deleted, moved).
+    pub func pick_next(self) -> unit!:
+        let at = self.table.selected_index()
+        if at >= 0 and at + 1 < self.rows.length:
+            self.table.select(at + 1)
+
+    ## Tell `on_pick` when the picked message changed; called every frame.
+    pub func poll(self) -> unit!:
+        let uid = self.picked_uid()
+        if uid == self.shown_uid:
+            return
+        self.shown_uid = uid
+        if let pick = self.on_pick:
+            pick(uid)
