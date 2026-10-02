@@ -156,8 +156,7 @@ pub class Panels:
     pub func poll(self) -> unit!:
         self.sidebar.poll()
         self.messages.poll()
-        for position in 0..<self.sources.length:
-            let source = self.sources[position]
+        for (position, source) in self.sources.indexed():
             let events = source.poll() catch failure:
                 self.tell(failure.message)
                 recover []

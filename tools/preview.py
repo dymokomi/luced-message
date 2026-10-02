@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix="luced-message-preview-") as temporary:
     (project / "package.prisma").write_text(manifest)
     binary = project / "preview"
     environment = dict(os.environ, LUCE_CACHE=str(ROOT / "build/cache"))
-    subprocess.run([os.environ.get("LUCE", "luce"), "build", str(project / "src/main.luc"), "--native", "-o", str(binary)], check=True, env=environment, timeout=600)
+    subprocess.run([os.environ.get("LUCE", str(ROOT.parent / "luce/build/luce")), "build", str(project / "src/main.luc"), "--native", "-o", str(binary)], check=True, env=environment, timeout=600)
     ppm = project / "preview.ppm"
     subprocess.run([str(binary), str(ppm), str(arguments.home.resolve()), str(arguments.position)], check=True, timeout=120)
     header, dimensions, maximum, pixels = ppm.read_bytes().split(b"\n", 3)

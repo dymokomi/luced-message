@@ -26,8 +26,7 @@ pub class Sidebar:
         let selected = self.selected()
         var items: list[ListItem] = []
         var entries: list[Entry] = []
-        for position in 0..<sources.length:
-            let source = sources[position]
+        for (position, source) in sources.indexed():
             items.append(ListItem(text = source.title().upper(), icon = IconKind.folder_open))
             entries.append(Entry(source = position, folder = "", role = ""))
             let folders = source.folders() catch failure:
@@ -40,8 +39,7 @@ pub class Sidebar:
         self.entries = entries
         self.view.set_items(items)
         if let previous = selected:
-            for at in 0..<entries.length:
-                let entry = entries[at]
+            for (at, entry) in entries.indexed():
                 if entry.source == previous.source and entry.folder == previous.folder:
                     self.view.select(at)
                     self.shown = at
@@ -55,8 +53,7 @@ pub class Sidebar:
 
     ## Pick source `source`'s folder `folder` (its Inbox when empty).
     pub func pick(self, source: int, folder: str) -> unit!:
-        for at in 0..<self.entries.length:
-            let entry = self.entries[at]
+        for (at, entry) in self.entries.indexed():
             if entry.source == source and ((folder != "" and entry.folder == folder) or (folder == "" and entry.role == "inbox")):
                 self.view.select(at)
                 return

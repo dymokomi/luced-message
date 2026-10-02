@@ -11,7 +11,7 @@ if app_version != package_version:
     raise SystemExit(f'src/app.luc says {app_version}; package.prisma says {package_version}')
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--base', type=Path, default=ROOT.parent / 'luce-base/build/luce-base')
-parser.add_argument('--luce', type=Path, default=Path(shutil.which('luce') or ROOT.parent / 'luce/build/luce'))
+parser.add_argument('--luce', type=Path, default=ROOT.parent / 'luce/build/luce')
 arguments = parser.parse_args()
 (ROOT / 'build').mkdir(exist_ok=True)
 environment = dict(os.environ, LUCE_BASE=str(arguments.base.resolve()), LUCE_CACHE=str(ROOT / 'build/cache'))
