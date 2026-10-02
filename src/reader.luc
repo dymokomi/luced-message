@@ -86,7 +86,7 @@ pub class Reader:
         shown.date = message.date_seconds()
         shown.message_id = message.message_id()
         shown.references = message.references()
-        shown.body = message.body_text()
+        shown.body = message.body_text(prefer_html = true)
         self.shown = shown
         self.from_line.set_text(f"From     {shown.sender}")
         self.to_line.set_text(f"To       {shown.to}")

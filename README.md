@@ -7,6 +7,8 @@ Messages come from **sources**. Email is the first source, read over IMAP and se
 over SMTP. Mail syncs on a background thread, so the window never waits on the
 network.
 
+![Inbox, a message list and an HTML newsletter read as text](docs/preview.png)
+
 ```sh
 luc install dymokomi/luced-message
 # Or, from a development checkout:
