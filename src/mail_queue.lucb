@@ -1,0 +1,81 @@
+## The mailroom between the window and the mail engine's thread: commands go one way
+## and events the other, each a line of tab-separated fields (engine_text's format).
+## Everything here is guarded by one lock; the window never waits on the engine, and
+## the engine looks for commands between its network steps.
+import memory
+import sync
+from engine_text import Buffer
+
+pub struct Mailroom:
+    var lock: sync.Mutex
+    ## Signalled to stop every network wait at once, when the window closes.
+    pub var quit: sync.Cancellation
+    var stopping: bool
+    var commands: Buffer
+    var events: Buffer
+    ## The engine's configuration, set before its thread starts.
+    pub var config: Buffer
+
+    ## Queue command `line` for the engine (window side).
+    pub mutating func push(line: const u8[]) -> !:
+        self.lock.lock()
+        defer self.lock.unlock()
+        try self.commands.put(line)
+        try self.commands.byte('\n')
+
+    ## Move every pending event line onto `out` (window side).
+    pub mutating func drain(out: Buffer*) -> !:
+        self.lock.lock()
+        defer self.lock.unlock()
+        try out.put(self.events.view())
+        self.events.clear()
+
+    ## Ask the engine to stop and end its network waits (window side).
+    pub mutating func stop():
+        self.lock.lock()
+        self.stopping = true
+        self.lock.unlock()
+        self.quit.request()
+
+    ## Post event `line` for the window (engine side).
+    pub mutating func post(line: const u8[]):
+        self.lock.lock()
+        defer self.lock.unlock()
+        self.events.put(line) catch failure:
+            return
+        self.events.byte('\n') catch failure:
+            return
+
+    ## Take the next command onto `out`; whether there was one (engine side).
+    pub mutating func take(out: Buffer*) -> bool!:
+        self.lock.lock()
+        defer self.lock.unlock()
+        let data = self.commands.view()
+        var end: usize = 0
+        while end < data.length and data[end] != '\n':
+            end += 1
+        if end == data.length:
+            return false
+        out.clear()
+        try out.put(data[0..<end])
+        let rest = data.length - end - 1
+        memory.move(self.commands.data, self.commands.data[end + 1..], rest)
+        self.commands.used = rest
+        return true
+
+    ## Whether a command is waiting (engine side).
+    pub mutating func has_command() -> bool:
+        self.lock.lock()
+        defer self.lock.unlock()
+        return self.commands.used > 0
+
+    ## Whether the engine should stop (engine side).
+    pub mutating func stopped() -> bool:
+        self.lock.lock()
+        defer self.lock.unlock()
+        return self.stopping
+
+    pub mutating func close():
+        self.commands.close()
+        self.events.close()
+        self.config.close()

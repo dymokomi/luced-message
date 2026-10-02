@@ -1,0 +1,54 @@
+## One Command per action, as in luced-2d: the toolbar's square buttons, the menus,
+## the command palette and the keyboard all present the same command, so disabling an
+## action (Reply with no message selected) disables it everywhere.
+from ui import Command, Shortcut
+from input import Key
+
+pub class Actions:
+    # Mailbox
+    pub let get_mail: Command
+    pub let compose: Command
+    pub let reply: Command
+    pub let reply_all: Command
+    pub let forward: Command
+    pub let delete: Command
+    pub let delete_back: Command
+    pub let archive: Command
+    pub let junk: Command
+    pub let flag: Command
+    pub let mark_unread: Command
+    # Composer
+    pub let send: Command
+    # Application
+    pub let accounts: Command
+    pub let palette: Command
+    pub let reset_layout: Command
+    pub let quit: Command
+    ## Every command, for the application's registry and the palette.
+    pub let all: list[Command]
+
+    pub func init(self) -> unit!:
+        self.get_mail = Command("Get Mail", Shortcut(Key.n, primary = true, shift = true), id = "get_mail")
+        self.compose = Command("New Message", Shortcut(Key.n, primary = true), id = "compose")
+        self.reply = Command("Reply", Shortcut(Key.r, primary = true), id = "reply")
+        self.reply_all = Command("Reply All", Shortcut(Key.r, primary = true, shift = true), id = "reply_all")
+        self.forward = Command("Forward", Shortcut(Key.f, primary = true, shift = true), id = "forward")
+        self.delete = Command("Delete", Shortcut(Key.delete), id = "delete")
+        self.delete_back = Command("Delete (Backspace)", Shortcut(Key.backspace), id = "delete_back")
+        self.archive = Command("Archive", Shortcut(Key.a, primary = true, alt = true), id = "archive")
+        self.junk = Command("Move to Junk", Shortcut(Key.j, primary = true, shift = true), id = "junk")
+        self.flag = Command("Flag", Shortcut(Key.l, primary = true, shift = true), id = "flag")
+        self.mark_unread = Command("Mark as Unread", Shortcut(Key.u, primary = true, shift = true), id = "mark_unread")
+        self.send = Command("Send", Shortcut(Key.d, primary = true, shift = true), id = "send")
+        self.accounts = Command("Accounts…", Shortcut(Key.comma, primary = true), id = "accounts")
+        self.palette = Command("Command Palette…", Shortcut(Key.p, primary = true, shift = true), id = "palette")
+        self.reset_layout = Command("Reset Layout", id = "reset_layout")
+        self.quit = Command("Quit", Shortcut(Key.q, primary = true), id = "quit")
+        self.all = [self.get_mail, self.compose, self.reply, self.reply_all, self.forward, self.delete, self.delete_back,
+                    self.archive, self.junk, self.flag, self.mark_unread, self.send, self.accounts, self.palette,
+                    self.reset_layout, self.quit]
+
+    ## Enable the actions on a message when one is selected.
+    pub func refresh(self, has_message: bool) -> unit!:
+        for command in [self.reply, self.reply_all, self.forward, self.delete, self.delete_back, self.archive, self.junk, self.flag, self.mark_unread]:
+            command.set_enabled(has_message)

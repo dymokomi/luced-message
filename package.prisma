@@ -1,0 +1,75 @@
+#prisma 4.0
+def package "luced-message" {
+    str owner = "dymokomi"
+    str version = "0.1.0"
+    str kind = "application"
+    str language = "luce"
+    str description = "A messaging client written in Luce, with Apple Mail's working habits and luced's grey-and-orange docked panes: mailboxes, a message list and a reader, over sources (email first) synced in the background."
+    str readme = "README.md"
+    str entry = "src/main.luc"
+
+    def application "bundle" {
+        str name = "Luced Message"
+        str identifier = "com.luciaos.luced-message"
+    }
+
+    def dependency "luce-ui" {
+        str owner = "dymokomi"
+        str version = "^0.12.2"
+        str path = "../luce-ui"
+    }
+
+    def dependency "luce-mime" {
+        str owner = "dymokomi"
+        str version = "^0.1.0"
+        str path = "../luce-mime"
+    }
+
+    def dependency "luce-imap" {
+        str owner = "dymokomi"
+        str version = "^0.1.0"
+        str path = "../luce-imap"
+    }
+
+    def dependency "luce-smtp" {
+        str owner = "dymokomi"
+        str version = "^0.1.0"
+        str path = "../luce-smtp"
+    }
+
+    def dependency "luce-tls" {
+        str owner = "dymokomi"
+        str version = "^0.1.4"
+        str path = "../luce-tls"
+    }
+
+    def dependency "luce-config" {
+        str owner = "dymokomi"
+        str version = "^0.1.4"
+        str path = "../luce-config"
+    }
+
+    def dependency "luce-color" {
+        str owner = "dymokomi"
+        str version = "^0.2.0"
+        str path = "../luce-color"
+    }
+
+    def dependency "luce-std" {
+        str owner = "dymokomi"
+        str version = "^0.1.5"
+        str path = "../luce-std"
+    }
+
+    def dependency "luce-gpu" {
+        str owner = "dymokomi"
+        str version = "^0.1.21"
+        str path = "../luce-gpu"
+    }
+
+    def dependency "luce-window" {
+        str owner = "dymokomi"
+        str version = "^0.1.9"
+        str path = "../luce-window"
+    }
+}

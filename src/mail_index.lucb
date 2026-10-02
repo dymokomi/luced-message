@@ -1,0 +1,150 @@
+## What the window reads from the store: a folder list and a folder's message index,
+## each loaded whole into an object Luce holds, with one accessor per column. Reading
+## them in Base keeps a 50,000-message folder quick to open.
+import c
+import files
+import interop
+import memory
+from engine_text import Buffer, Pool, Records, Fields, equal
+from mail_store import Index, Row, Folder
+
+## A folder's messages, as the store has them, sorted by UID.
+pub struct MessageIndex:
+    var index: Index
+
+    ## How many messages there are.
+    pub func count() -> i64:
+        return (i64)self.index.rows.length()
+
+    func row(at: i64) -> Row:
+        if at < 0 or at >= (i64)self.index.rows.length():
+            trap("no message at that position in the index")
+        return self.index.rows.at((usize)at)
+
+    pub func uid(at: i64) -> i64:
+        return (i64)self.row(at).uid
+    ## imap.Flags bits: 1 seen, 2 answered, 4 flagged, 8 deleted, 16 draft, 64 forwarded, 128 junk.
+    pub func flags(at: i64) -> i64:
+        return (i64)self.row(at).flags
+    ## Seconds since 1970 UTC.
+    pub func date(at: i64) -> i64:
+        return self.row(at).date
+    pub func size(at: i64) -> i64:
+        return (i64)self.row(at).size
+    pub func attachment(at: i64) -> bool:
+        return self.row(at).attachment
+    pub func sender(at: i64) -> str:
+        return self.row(at).sender
+    pub func subject(at: i64) -> str:
+        return self.row(at).subject
+    pub func message_id(at: i64) -> str:
+        return self.row(at).message_id
+    pub func in_reply_to(at: i64) -> str:
+        return self.row(at).in_reply_to
+    pub func preview(at: i64) -> str:
+        return self.row(at).preview
+
+    ## The position of the message with UID `uid`, or -1.
+    pub func position(uid: i64) -> i64:
+        if uid < 0 or uid > 0xFFFFFFFF:
+            return -1
+        let at = self.index.find((u32)uid) else return -1
+        return (i64)at
+
+    pub mutating func close():
+        self.index.close()
+
+pub let message_index_type: interop.Type[MessageIndex] = interop.Type[MessageIndex]("Message index", MessageIndex.close, closeable = true)
+
+## Read the index file at `path`; empty when there is none.
+pub func read_index(path: str) -> interop.Reference[MessageIndex]!:
+    var name: Buffer
+    defer name.close()
+    try name.text(path)
+    let native = try new MessageIndex(index = try Index.load(try name.terminated())) in memory.heap
+    errdefer free(native) in memory.heap
+    return try interop.Reference[MessageIndex].adopt(native, message_index_type)
+
+## The folders of one account, as the engine listed them.
+pub struct FolderList:
+    var folders: Records[Folder]
+    var text: Pool
+
+    pub func count() -> i64:
+        return (i64)self.folders.length()
+
+    func folder(at: i64) -> Folder:
+        if at < 0 or at >= (i64)self.folders.length():
+            trap("no folder at that position")
+        return self.folders.at((usize)at)
+
+    ## The server's name for folder `at`, used in commands.
+    pub func path(at: i64) -> str:
+        return self.folder(at).path
+    ## The name to show.
+    pub func name(at: i64) -> str:
+        return self.folder(at).name
+    ## The hierarchy delimiter as a character code, zero for none.
+    pub func delimiter(at: i64) -> i64:
+        return (i64)self.folder(at).delimiter
+    ## imap.MailboxFlags bits: 256 all, 512 archive, 1024 drafts, 2048 flagged, 4096 junk,
+    ## 8192 sent, 16384 trash.
+    pub func flags(at: i64) -> i64:
+        return (i64)self.folder(at).flags
+    ## The folder's directory name in the store.
+    pub func key(at: i64) -> str:
+        return self.folder(at).key
+    pub func total(at: i64) -> i64:
+        return (i64)self.folder(at).total
+    pub func unseen(at: i64) -> i64:
+        return (i64)self.folder(at).unseen
+
+    pub mutating func close():
+        self.folders.close()
+        self.text.close()
+
+pub let folder_list_type: interop.Type[FolderList] = interop.Type[FolderList]("Folder list", FolderList.close, closeable = true)
+
+## Read the folders file at `path`; empty when there is none.
+pub func read_folders(path: str) -> interop.Reference[FolderList]!:
+    let native = try new FolderList in memory.heap
+    errdefer free(native) in memory.heap
+    var name: Buffer
+    defer name.close()
+    try name.text(path)
+    let file = try name.terminated()
+    if files.exists(file):
+        let data: u8[]? = files.read(file) catch failure:
+            recover none
+        if let bytes = data:
+            defer free(bytes)
+            try read_folder_lines(bytes, native)
+    return try interop.Reference[FolderList].adopt(native, folder_list_type)
+
+func read_folder_lines(bytes: const u8[], list: FolderList*) -> !:
+    var scratch: Buffer
+    defer scratch.close()
+    var start: usize = 0
+    var first = true
+    for at in 0..<bytes.length + 1:
+        if at < bytes.length and bytes[at] != '\n':
+            continue
+        let line = bytes[start..<at]
+        start = at + 1
+        if line.length == 0:
+            continue
+        if first:
+            first = false
+            continue
+        let fields = Fields.split(line)
+        if fields.length() < 7:
+            continue
+        scratch.clear()
+        try fields.unescape(0, &scratch)
+        let path = try list.text.keep_text(scratch.view())
+        scratch.clear()
+        try fields.unescape(1, &scratch)
+        let name = try list.text.keep_text(scratch.view())
+        let key = try list.text.keep_text(fields.raw(4))
+        try list.folders.add(Folder(path = path, name = name, delimiter = (u8)fields.number(2), flags = (u32)fields.number(3),
+                                    key = key, total = (u32)fields.number(5), unseen = (u32)fields.number(6)))

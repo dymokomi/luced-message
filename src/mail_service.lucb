@@ -1,0 +1,63 @@
+## The mail service the window owns: one engine thread per account, reached through a
+## Mailroom. The window submits command lines and polls for event lines; it never
+## waits on the network. Closing stops the engine (every network wait ends at once)
+## and joins its thread.
+import interop
+import memory
+import thread
+from engine_text import Buffer
+from mail_queue import Mailroom
+from mail_sync import Engine
+
+## The engine thread: serve the account in the mailroom until it stops.
+func serve(context: void*?):
+    let room = (Mailroom*)(context else return)
+    var engine = Engine.create(room) catch failure:
+        room.post(b"offline\tthe account could not be read")
+        return
+    engine.run()
+    engine.close()
+
+## A running mail engine for one account.
+pub struct MailService:
+    var room: Mailroom*?
+    var handle: thread.Handle
+    ## The last poll's events, kept until the next poll.
+    var polled: Buffer
+
+    ## Queue command `line` (tab-separated fields, see mail_sync) for the engine.
+    pub mutating func submit(line: str) -> !:
+        let room = self.room else error(interop.worker_closed, "the mail service is closed")
+        try room.push(line.bytes)
+
+    ## The events since the last poll, one per line; empty text when there are none.
+    pub mutating func poll() -> str!:
+        self.polled.clear()
+        let room = self.room else return ""
+        try room.drain(&self.polled)
+        return self.polled.text_view()
+
+    ## Stop the engine and wait for its thread.
+    pub mutating func close():
+        let room = self.room else return
+        room.stop()
+        self.handle.join() catch failure:
+            trap("the mail engine's thread could not be joined")
+        room.close()
+        free(room) in memory.heap
+        self.room = none
+        self.polled.close()
+
+## The interop type of a `MailService`.
+pub let mail_service_type: interop.Type[MailService] = interop.Type[MailService]("Mail service", MailService.close, closeable = true, main_thread = true)
+
+## Start a mail engine for the account in configuration line `config`:
+## id, store root, IMAP host, port, security, user, password, SMTP host, port,
+## security, user, password, each a tab-separated field.
+pub func start_service(config: str) -> interop.Reference[MailService]!:
+    let room = try new Mailroom in memory.heap
+    errdefer free(room) in memory.heap
+    try room.config.put(config.bytes)
+    let handle = try thread.spawn(serve, (void*)room, name = "luced-message mail")
+    let service = try new MailService(room = room, handle = handle) in memory.heap
+    return try interop.Reference[MailService].adopt(service, mail_service_type)

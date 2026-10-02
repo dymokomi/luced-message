@@ -1,0 +1,252 @@
+## Text the mail engine builds and keeps, on its own thread: a growable Buffer, a Pool
+## that keeps text at stable addresses, Records of plain values, and the line format the
+## engine shares with the window: fields separated by tabs, a record by a newline, with
+## `\t`, `\n` and `\\` escaped inside a field.
+import c
+import memory
+import utf8
+
+## A growable run of bytes on the heap.
+pub struct Buffer:
+    pub var data: u8[]
+    pub var used: usize
+
+    mutating func reserve(extra: usize) -> !:
+        let needed = self.used + extra
+        if needed + 1 <= self.data.length:
+            return
+        var capacity: usize = 256 if self.data.length == 0 else self.data.length * 2
+        while capacity < needed + 1:
+            capacity *= 2
+        let grown = try new u8[capacity] in memory.heap
+        memory.copy(grown, self.data, self.used)
+        if self.data.length > 0:
+            free(self.data) in memory.heap
+        self.data = grown
+
+    pub mutating func put(data: const u8[]) -> !:
+        try self.reserve(data.length)
+        memory.copy(self.data[self.used..], data, data.length)
+        self.used += data.length
+
+    pub mutating func text(text: str) -> !:
+        try self.put(text.bytes)
+
+    pub mutating func byte(value: u8) -> !:
+        try self.reserve(1)
+        self.data[self.used] = value
+        self.used += 1
+
+    ## Append `value` in decimal.
+    pub mutating func number(value: i64) -> !:
+        var digits: u8[20]
+        var count: usize = 0
+        var rest: u64 = (u64)(value if value >= 0 else -value)
+        while rest > 0 or count == 0:
+            digits[count] = (u8)(rest % 10) + '0'
+            rest = rest // 10
+            count += 1
+        if value < 0:
+            try self.byte('-')
+        while count > 0:
+            count -= 1
+            try self.byte(digits[count])
+
+    ## Append `data` as one field: tabs, newlines and backslashes escaped.
+    pub mutating func field(data: const u8[]) -> !:
+        for byte in data:
+            if byte == '\t':
+                try self.put(b"\\t")
+            elif byte == '\n':
+                try self.put(b"\\n")
+            elif byte == '\r':
+                try self.put(b"\\r")
+            elif byte == '\\':
+                try self.put(b"\\\\")
+            else:
+                try self.byte(byte)
+
+    pub func view() -> const u8[]:
+        return self.data[0..<self.used]
+
+    ## The contents as text: UTF-8 as far as it is valid.
+    pub func text_view() -> str:
+        let data = self.view()
+        if utf8.valid(data):
+            return (str)data
+        return (str)data[0..<(utf8.invalid_offset(data) else 0)]
+
+    ## The contents as a C string, valid until the next change.
+    pub mutating func terminated() -> c.str!:
+        try self.reserve(1)
+        self.data[self.used] = 0
+        return (c.str)(str)self.data[0..<self.used]
+
+    pub mutating func clear():
+        self.used = 0
+
+    pub mutating func close():
+        if self.data.length > 0:
+            free(self.data) in memory.heap
+        var empty: u8[]
+        self.data = empty
+        self.used = 0
+
+## Text kept at stable addresses until the pool closes.
+pub struct Pool:
+    var chunks: u8[][]
+    var count: usize
+    var used: usize
+
+    pub mutating func keep(data: const u8[]) -> const u8[]!:
+        if data.length == 0:
+            var empty: const u8[]
+            return empty
+        if self.count == 0 or self.chunks[self.count - 1].length - self.used < data.length:
+            if self.count == self.chunks.length:
+                let capacity: usize = 8 if self.chunks.length == 0 else self.chunks.length * 2
+                let grown = try new (u8[])[capacity] in memory.heap
+                for index in 0..<self.count:
+                    grown[index] = self.chunks[index]
+                if self.chunks.length > 0:
+                    free(self.chunks) in memory.heap
+                self.chunks = grown
+            self.chunks[self.count] = try new u8[data.length if data.length > 65536 else 65536] in memory.heap
+            self.count += 1
+            self.used = 0
+        let room = self.chunks[self.count - 1][self.used..<self.used + data.length]
+        memory.copy(room, data, data.length)
+        self.used += data.length
+        return room
+
+    ## A kept copy of text `data`; bytes that are not UTF-8 are dropped from the end.
+    pub mutating func keep_text(data: const u8[]) -> str!:
+        let valid = data if utf8.valid(data) else data[0..<(utf8.invalid_offset(data) else 0)]
+        return (str)(try self.keep(valid))
+
+    pub mutating func close():
+        for index in 0..<self.count:
+            free(self.chunks[index]) in memory.heap
+        if self.chunks.length > 0:
+            free(self.chunks) in memory.heap
+        var empty: u8[][]
+        self.chunks = empty
+        self.count = 0
+        self.used = 0
+
+## A growable list of plain values.
+pub struct Records[T]:
+    var data: T[]
+    var used: usize
+
+    pub mutating func add(value: T) -> !:
+        if self.used == self.data.length:
+            let capacity: usize = 16 if self.data.length == 0 else self.data.length * 2
+            let grown = try alloc T[capacity] in memory.heap
+            for index in 0..<self.used:
+                grown[index] = self.data[index]
+            if self.data.length > 0:
+                free(self.data) in memory.heap
+            self.data = grown
+        self.data[self.used] = value
+        self.used += 1
+
+    ## Remove the value at `index`, keeping the order of the rest.
+    pub mutating func remove(index: usize):
+        if index >= self.used:
+            return
+        for at in index..<self.used - 1:
+            self.data[at] = self.data[at + 1]
+        self.used -= 1
+
+    pub func length() -> usize:
+        return self.used
+
+    pub func at(index: usize) -> T:
+        return self.data[index]
+
+    pub mutating func set(index: usize, value: T):
+        self.data[index] = value
+
+    pub func view() -> const T[]:
+        return self.data[0..<self.used]
+
+    pub mutating func clear():
+        self.used = 0
+
+    pub mutating func close():
+        if self.data.length > 0:
+            free(self.data) in memory.heap
+        var empty: T[]
+        self.data = empty
+        self.used = 0
+
+## The fields of one line, split at tabs, still escaped.
+pub struct Fields:
+    var line: const u8[]
+    var starts: usize[32]
+    var ends: usize[32]
+    var count: usize
+
+    ## Split `line` (without its newline) at tabs, at most 32 fields.
+    pub static func split(line: const u8[]) -> Fields:
+        var fields = Fields(line = line)
+        var start: usize = 0
+        for index in 0..<line.length + 1:
+            if index == line.length or line[index] == '\t':
+                if fields.count < 32:
+                    fields.starts[fields.count] = start
+                    fields.ends[fields.count] = index
+                    fields.count += 1
+                start = index + 1
+        return fields
+
+    pub func length() -> usize:
+        return self.count
+
+    ## Field `index` as written (escaped); empty past the end.
+    pub func raw(index: usize) -> const u8[]:
+        if index >= self.count:
+            var empty: const u8[]
+            return empty
+        return self.line[self.starts[index]..<self.ends[index]]
+
+    ## Field `index` unescaped onto `out`.
+    pub func unescape(index: usize, out: Buffer*) -> !:
+        let data = self.raw(index)
+        var at: usize = 0
+        while at < data.length:
+            var byte = data[at]
+            if byte == '\\' and at + 1 < data.length:
+                at += 1
+                byte = match data[at]:
+                    't' => '\t'
+                    'n' => '\n'
+                    'r' => '\r'
+                    _ => data[at]
+            try out.byte(byte)
+            at += 1
+
+    ## Field `index` as a number; zero when it is not one.
+    pub func number(index: usize) -> i64:
+        let data = self.raw(index)
+        var value: i64 = 0
+        var negative = false
+        for at in 0..<data.length:
+            let byte = data[at]
+            if at == 0 and byte == '-':
+                negative = true
+            elif byte >= '0' and byte <= '9':
+                value = value * 10 + (i64)(byte - '0')
+            else:
+                return 0
+        return -value if negative else value
+
+## Whether `a` and `b` hold the same bytes.
+pub func equal(a: const u8[], b: const u8[]) -> bool:
+    if a.length != b.length:
+        return false
+    for index in 0..<a.length:
+        if a[index] != b[index]:
+            return false
+    return true
