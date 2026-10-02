@@ -258,6 +258,22 @@ pub struct Engine:
         self.wants_full_sync = false
         self.last_full_sync = time.now()
         self.post("status", b"Checking for mail")
+        try self.list_folders()
+        for at in 0..<self.folders.length():
+            if self.room.stopped():
+                return
+            try self.sync_folder(at)
+            # A command the window is waiting on goes before the remaining folders.
+            var command: Buffer
+            defer command.close()
+            while try self.room.take(&command):
+                try self.handle(command.view())
+        try self.save_folders()
+        self.post("folders")
+        self.post("status", b"")
+
+    ## Learn the folders, INBOX first, and write the folders file.
+    mutating func list_folders() -> !:
         let mailboxes = try self.session.list()
         self.folders.clear()
         self.folder_text.close()
@@ -275,18 +291,6 @@ pub struct Engine:
                                             delimiter = mailbox.delimiter, flags = (u32)mailbox.flags, key = try self.folder_text.keep_text(key.view())))
         try self.save_folders()
         self.post("folders")
-        for at in 0..<self.folders.length():
-            if self.room.stopped():
-                return
-            try self.sync_folder(at)
-            # A command the window is waiting on goes before the remaining folders.
-            var command: Buffer
-            defer command.close()
-            while try self.room.take(&command):
-                try self.handle(command.view())
-        try self.save_folders()
-        self.post("folders")
-        self.post("status", b"")
 
     ## Write the folders file.
     mutating func save_folders() -> !:
@@ -513,13 +517,25 @@ pub struct Engine:
         client.quit()
         # A copy in the Sent folder, unless the server files one itself (it does not
         # say; Gmail does, most do not).
-        for folder in self.folders.view():
-            if (folder.flags & (u32)imap.MailboxFlags.sent) != 0:
-                discard(self.session.append(folder.path, data, imap.Flags.seen) catch failure:
-                    recover 0)
-                break
+        if self.folders.length() == 0:
+            try self.list_folders()
+        if let sent = self.sent_folder():
+            discard(self.session.append(sent, data, imap.Flags.seen) catch failure:
+                recover 0)
         self.post("sent", file)
         self.post("status", b"")
+
+    ## The folder sent mail is filed in: the one marked \\Sent, else one named as
+    ## servers without special-use name it.
+    func sent_folder() -> str?:
+        for folder in self.folders.view():
+            if (folder.flags & (u32)imap.MailboxFlags.sent) != 0:
+                return folder.path
+        for name in ["Sent", "Sent Items", "Sent Messages", "Sent Mail", "INBOX.Sent"]:
+            for folder in self.folders.view():
+                if imap.same(folder.path.bytes, name.bytes):
+                    return folder.path
+        return none
 
     # mark: waiting ==============================================================================
 
