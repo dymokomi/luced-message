@@ -10,6 +10,7 @@
 import c
 import luce_std.files
 import memory
+import strings
 from engine_text import Buffer, Pool, Records, Fields, equal
 
 ## One message's row in a folder index.
@@ -237,3 +238,10 @@ pub func ensure_path(path: str) -> !:
     for at in 1..<data.length + 1:
         if at == data.length or data[at] == '/':
             try files.ensure_directory((str)data[0..<at])
+
+## Delete directory `path` and everything in it, when it exists: a removed account's store.
+pub func remove_path(path: str) -> !:
+    let terminated = try strings.copy(path)
+    defer strings.release(terminated)
+    if files.exists((c.str)terminated):
+        try files.remove_tree((c.str)terminated)

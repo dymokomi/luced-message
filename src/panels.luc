@@ -15,6 +15,7 @@ from composer import Composer
 from account_dialog import AccountDialog
 import luce_std.paths
 import mail_index
+import mail_store
 
 pub class Panels:
     pub let body: VStack
@@ -152,11 +153,14 @@ pub class Panels:
         else:
             self.sidebar.pick(0, "")
 
-    ## Forget a removed account's password, then save the accounts left.
+    ## Forget a removed account: its password, then, once its source has stopped, the
+    ## mail stored for it, so adding the address again starts afresh.
     func remove_account(self, accounts: list[Account], id: str) -> unit!:
         self.store.forget(id) catch failure:
             self.tell(f"The keychain kept the password: {failure.message}")
         self.save_accounts(accounts)
+        mail_store.remove_path(paths.join(paths.join(self.directory, "store"), id)) catch failure:
+            self.tell(f"The stored mail was not removed: {failure.message}")
 
     ## Save the accounts and restart every source with them.
     func save_accounts(self, accounts: list[Account]) -> unit!:
