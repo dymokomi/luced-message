@@ -5,6 +5,7 @@ from luce_std import files
 import interop
 import memory
 from luce_prism import prism
+from luce_mime import mime
 from engine_text import Buffer, Records
 from mail_store import Row, Folder
 from mail_threads import Threads, thread
@@ -184,6 +185,17 @@ pub func read_index(store: interop.Reference[prism.Store], identity: str) -> int
     try native.sort()
     native.threads = try thread(&native.rows.rows)
     return try interop.Reference[MessageIndex].adopt(native, message_index_type)
+
+## Message `uid` of folder identity `identity`, parsed; none when its body is not in
+## the store yet.
+pub func open_message(store: interop.Reference[prism.Store], identity: str, uid: i64) -> interop.Reference[mime.Message]?!:
+    if uid < 0 or uid > 0xFFFFFFFF:
+        return none
+    var raw: Buffer
+    defer raw.close()
+    if not try mail_db.read_raw(try store.get(), identity, (u32)uid, &raw):
+        return none
+    return try mime.parse(raw.view())
 
 ## The folders of one account, as the engine listed them.
 pub struct FolderList:

@@ -1,16 +1,15 @@
 ## The composer: a dialog with From (the account), To, Cc, Bcc and Subject fields, the
 ## plain-text body, and Send. New, Reply, Reply All and Forward open it filled in as
 ## Mail does: Re:/Fwd: subjects, the original quoted under an attribution line, and a
-## reply threaded by In-Reply-To and References. Sending writes the message (built
-## by luce-mime's Draft) into the outbox and hands it to the source's engine.
+## reply threaded by In-Reply-To and References. Sending hands the message (built by
+## luce-mime's Draft) to the source, which queues it in the mail database's outbox for
+## its engine.
 from luce_ui.ui import Dialog, HStack, Text, TextField, TextEditor, Button, Spacer, Font, Size, Application
 from interop import Connection
 from reader import Shown
 from sources import Source
 from luce_mime import mime
 import clock
-from luce_std import files, paths
-import time
 
 pub class Composer:
     pub let dialog: Dialog
@@ -27,8 +26,6 @@ pub class Composer:
     var source: Source? = none
     var reply_id: str = ""
     var reply_references: str = ""
-    ## Where sent messages wait for the engine.
-    let outbox: str
     ## Files to attach, as paths.
     var attachments: list[str] = []
     let attached: Text
@@ -37,9 +34,8 @@ pub class Composer:
     ## Called with a line for the status bar.
     pub var on_status: func(str) -> unit!? = none
 
-    pub func init(self, font: Font, home: str) -> unit!:
+    pub func init(self, font: Font) -> unit!:
         self.font = font
-        self.outbox = paths.join(home, "outbox")
         self.from_line = Text("", font = font, muted = true)
         self.to_field = TextField("", font = font, placeholder = "To", cells = 60.0)
         self.cc_field = TextField("", font = font, placeholder = "Cc", cells = 60.0)
@@ -150,23 +146,14 @@ pub class Composer:
                 return none
         return draft
 
-    ## Write `draft` into the outbox; its file.
-    func write_out(self, draft: mime.Draft) -> str!:
-        let message = draft.encode()
-        files.ensure_directory(self.outbox)
-        let file = paths.join(self.outbox, f"{time.now()}.eml")
-        files.write_text(file, message)
-        return file
-
-    ## Build the message, put it in the outbox and ask the source to send it.
+    ## Build the message and ask the source to send it.
     func send(self) -> unit!:
         let source = self.source else return
         let draft = self.encoded(source, false) else return
-        let file = self.write_out(draft)
         var recipients: list[str] = []
         for at in 0..<draft.recipient_count():
             recipients.append(draft.recipient(at))
-        source.send(file, draft.sender(), recipients)
+        source.send(draft.encode(), draft.sender(), recipients)
         if let status = self.on_status:
             status("Sending…")
         self.dialog.hide()
@@ -175,7 +162,7 @@ pub class Composer:
     func save_draft(self) -> unit!:
         let source = self.source else return
         let draft = self.encoded(source, true) else return
-        source.save_draft(self.write_out(draft))
+        source.save_draft(draft.encode())
         if let status = self.on_status:
             status("Saving the draft…")
         self.dialog.hide()

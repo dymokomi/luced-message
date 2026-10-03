@@ -2,7 +2,6 @@
 ## roles and the composer's reply text. Run by tests/run.py with a scratch directory.
 from accounts import Account, AccountStore, account_id, escape
 import mail_index
-import mail_store
 import clock
 from luce_std import files, paths
 import sources_tests
@@ -43,8 +42,8 @@ func accounts_round_trip(directory: str) -> unit!:
     check(loaded[1].title() == "bob@example.test", "a title falls back to the address")
     check(account_id("Alice.Smith@Example.com", ["alice_smith_example_com"]) == "alice_smith_example_com_2", "ids are unique")
     check(escape("a\tb\\c\nd") == "a\\tb\\\\c\\nd", "engine fields are escaped")
-    let line = work.engine_line("/store")
-    check(line.split("\t").length == 12, "the engine line has twelve fields")
+    let line = work.engine_line()
+    check(line.split("\t").length == 11, "the engine line has eleven fields")
     let written = files.read_text(store.path)
     check(not ("password" in written), "no password in accounts.toml")
     if keychain_here:
@@ -103,21 +102,11 @@ func conversations() -> unit!:
     check(index.thread_size(4) == 2, "replies to a missing message join")
     check(index.thread_attachment(0), "the Lunch thread has an attachment")
 
-## A removed account's store goes, with everything in it.
-func store_removal(directory: str) -> unit!:
-    let folder = paths.join(directory, "removed/store/work/INBOX")
-    mail_store.ensure_path(folder)
-    files.write_text(paths.join(folder, "index"), "luced-message index 1\n")
-    mail_store.remove_path(paths.join(directory, "removed"))
-    check(not mail_index.exists(paths.join(folder, "index")) and not mail_index.exists(paths.join(directory, "removed")), "the store is gone")
-    mail_store.remove_path(paths.join(directory, "removed"))
-
 pub func main(arguments: list[str]) -> int!:
     let directory = arguments[0] if arguments.length > 0 else "/tmp/luced-message-tests"
     files.ensure_directory(directory)
     accounts_round_trip(directory)
     accounts_without_keychain(directory)
-    store_removal(directory)
     index_reading()
     conversations()
     db_tests.run(prism.Store.memory())

@@ -45,19 +45,20 @@ extend Engine:
         if changed:
             self.post("folder", path)
 
-    ## Send the message in `file` from `sender` to the comma-separated `recipients`.
-    mutating func send(file: const u8[], sender: const u8[], recipients: const u8[]):
-        self.send_message(file, sender, recipients) catch failure:
-            self.post("unsent", file, failure.message.bytes)
+    ## Send the message queued at `queued` in the outbox from `sender` to the
+    ## comma-separated `recipients`. It leaves the outbox once sent; a failed one stays.
+    mutating func send(queued: const u8[], sender: const u8[], recipients: const u8[]):
+        self.send_message(queued, sender, recipients) catch failure:
+            self.post("unsent", queued, failure.message.bytes)
             recover ()
 
-    mutating func send_message(file: const u8[], sender: const u8[], recipients: const u8[]) -> !:
+    mutating func send_message(queued: const u8[], sender: const u8[], recipients: const u8[]) -> !:
         self.post("status", b"Sending")
-        var path: Buffer
-        defer path.close()
-        try path.put(file)
-        let data = try files.read(try path.terminated())
-        defer free(data)
+        var message: Buffer
+        defer message.close()
+        if not try mail_db.read_queued(self.store, self.account.id, (str)queued, &message):
+            error(imap.unsupported, "the queued message is gone")
+        let data = message.view()
         var list: Records[str]
         defer list.close()
         var start: usize = 0
@@ -79,7 +80,8 @@ extend Engine:
         if let sent = self.sent_folder():
             discard(self.session.append(sent, data, imap.Flags.seen) catch failure:
                 recover 0)
-        self.post("sent", file)
+        try mail_db.unqueue(self.store, self.account.id, (str)queued)
+        self.post("sent", queued)
         self.post("status", b"")
 
     ## The folder sent mail is filed in: the one marked \\Sent, else one named as
@@ -102,23 +104,24 @@ extend Engine:
                     return folder.path
         return none
 
-    ## File the message in `file` in the Drafts folder, marked as a draft.
-    mutating func save_draft(file: const u8[]):
-        self.file_draft(file) catch failure:
-            self.post("unsaved", file, failure.message.bytes)
+    ## File the message queued at `queued` in the Drafts folder, marked as a draft.
+    mutating func save_draft(queued: const u8[]):
+        self.file_draft(queued) catch failure:
+            self.post("unsaved", queued, failure.message.bytes)
             recover ()
 
-    mutating func file_draft(file: const u8[]) -> !:
-        var path: Buffer
-        defer path.close()
-        try path.put(file)
-        let data = try files.read(try path.terminated())
-        defer free(data)
+    mutating func file_draft(queued: const u8[]) -> !:
+        var message: Buffer
+        defer message.close()
+        if not try mail_db.read_queued(self.store, self.account.id, (str)queued, &message):
+            error(imap.unsupported, "the queued draft is gone")
+        let data = message.view()
         if self.folders.length() == 0:
             try self.list_folders()
         let drafts = self.drafts_folder() else error(imap.unsupported, "this account has no Drafts folder")
         discard(try self.session.append(drafts, data, imap.Flags.seen | imap.Flags.draft))
-        self.post("saved", file)
+        try mail_db.unqueue(self.store, self.account.id, (str)queued)
+        self.post("saved", queued)
         self.wants_full_sync = true
 
 extend Engine:

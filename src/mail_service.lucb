@@ -57,9 +57,9 @@ pub struct MailService:
 ## The interop type of a `MailService`.
 pub let mail_service_type: interop.Type[MailService] = interop.Type[MailService]("Mail service", MailService.close, closeable = true, main_thread = true)
 
-## Start a mail engine for the account in configuration line `config` (id, store root,
-## IMAP host, port, security, user, password, SMTP host, port, security, user,
-## password, each a tab-separated field), writing to the mail database `store`.
+## Start a mail engine for the account in configuration line `config` (id, IMAP host,
+## port, security, user, password, SMTP host, port, security, user, password, each a
+## tab-separated field), writing to the mail database `store`.
 pub func start_service(config: str, store: interop.Reference[prism.Store]) -> interop.Reference[MailService]!:
     let room = try new Mailroom in memory.heap
     errdefer free(room) in memory.heap

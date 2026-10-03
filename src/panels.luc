@@ -18,6 +18,7 @@ import mail_index
 import mail_store
 import mail_db
 from luce_prism import prism
+from luce_mime import mime
 
 pub class Panels:
     pub let body: VStack
@@ -52,7 +53,7 @@ pub class Panels:
         self.sidebar = Sidebar(font)
         self.messages = MessageList(font)
         self.reader = Reader(font)
-        self.composer = Composer(font, self.directory)
+        self.composer = Composer(font)
         self.account_dialog = AccountDialog(font)
         self.status = Text("", font = font, muted = true)
         self.search = TextField("", font = font, placeholder = "Search", cells = 22.0)
@@ -150,9 +151,8 @@ pub class Panels:
         self.accounts = self.store.load()
         if self.store.warning != "":
             self.tell(self.store.warning)
-        let store = paths.join(self.directory, "store")
         for account in self.accounts:
-            self.sources.append(EmailSource(account, store, self.mail))
+            self.sources.append(EmailSource(account, self.mail))
         self.sidebar.refresh(self.sources)
         if self.sources.length == 0:
             self.tell("No accounts yet: Mailbox › Accounts… adds one.")
@@ -166,8 +166,6 @@ pub class Panels:
             self.tell(f"The keychain kept the password: {failure.message}")
         self.save_accounts(accounts)
         mail_db.forget_account(self.mail, id) catch failure:
-            self.tell(f"The stored mail was not removed: {failure.message}")
-        mail_store.remove_path(paths.join(paths.join(self.directory, "store"), id)) catch failure:
             self.tell(f"The stored mail was not removed: {failure.message}")
 
     ## Save the accounts and restart every source with them.
@@ -211,7 +209,7 @@ pub class Panels:
                 if let shown = self.reader.shown:
                     if shown.source == position and shown.folder == event.folder:
                         # The message on its way, or an earlier one of its conversation.
-                        if (shown.uid == event.uid and shown.file == "") or (shown.waiting > 0 and event.uid in shown.members):
+                        if (shown.uid == event.uid and not shown.loaded) or (shown.waiting > 0 and event.uid in shown.members):
                             self.show_message(shown.uid)
             "status":
                 self.tell(f"{source.title()}: {event.text}" if event.text != "" else "")
@@ -267,21 +265,22 @@ pub class Panels:
         if count > 1:
             self.reader.many(count, "conversations" if self.messages.threaded else "messages")
             return
-        let file = source.message_file(self.folder, uid)
-        if file == "":
+        let message = source.message(self.folder, uid)
+        if message == none:
             self.reader.loading(self.source, self.folder, uid)
             source.fetch(self.folder, uid)
             return
+        let shown = message else return
         let members = self.messages.shown_uids()
-        var earlier: list[str] = []
+        var earlier: list[mime.Message?] = []
         for member in members:
             if member == uid:
                 continue
-            let other = source.message_file(self.folder, member)
-            if other == "":
+            let other = source.message(self.folder, member)
+            if other == none:
                 source.fetch(self.folder, member)
             earlier.append(other)
-        self.reader.show(self.source, self.folder, uid, file, members, earlier)
+        self.reader.show(self.source, self.folder, uid, shown, members, earlier)
         if self.messages.picked_unread():
             source.set_flags(self.folder, members, true, seen_flag)
 
@@ -304,14 +303,14 @@ pub class Panels:
     func reply(self, all: bool) -> unit!:
         let source = self.current() else return
         let shown = self.reader.shown else return
-        if shown.file == "":
+        if not shown.loaded:
             return
         self.composer.reply(source, shown, all)
 
     func forward(self) -> unit!:
         let source = self.current() else return
         let shown = self.reader.shown else return
-        if shown.file == "":
+        if not shown.loaded:
             return
         self.composer.forward(source, shown)
 

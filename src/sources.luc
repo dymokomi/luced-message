@@ -8,8 +8,9 @@ import mail_service
 from mail_service import MailService
 import mail_index
 from mail_index import MessageIndex
-from luce_std import paths
 from luce_prism import prism
+from luce_mime import mime
+import mail_db
 
 ## Message flag bits, as the store keeps them (imap.Flags).
 pub let seen_flag: int = 1
@@ -45,16 +46,17 @@ pub interface Source:
     func address(self) -> str
     func folders(self) -> list[FolderInfo]!
     func messages(self, folder: str) -> MessageIndex!
-    ## The path of message `uid`'s file, or "" when it is not fetched yet (see `fetch`).
-    func message_file(self, folder: str, uid: int) -> str!
+    ## Message `uid`, or none when its body is not fetched yet (see `fetch`).
+    func message(self, folder: str, uid: int) -> mime.Message?!
     func fetch(self, folder: str, uid: int) -> unit!
     func set_flags(self, folder: str, uids: list[int], add: bool, bits: int) -> unit!
     ## Move messages to the folder with `role` (trash, junk, archive); false when the
     ## source has no such folder.
     func move_to(self, folder: str, uids: list[int], role: str) -> bool!
-    func send(self, file: str, sender: str, recipients: list[str]) -> unit!
-    ## Keep the message in `file` as a draft (the account's Drafts folder).
-    func save_draft(self, file: str) -> unit!
+    ## Send `message` (RFC 5322 text) from `sender` to `recipients`.
+    func send(self, message: str, sender: str, recipients: list[str]) -> unit!
+    ## Keep `message` (RFC 5322 text) as a draft (the account's Drafts folder).
+    func save_draft(self, message: str) -> unit!
     ## Ask which messages of `folder` hold `query` anywhere; the answer comes as a
     ## `found` event whose text is the matching UIDs, comma-separated.
     func search(self, folder: str, query: str) -> unit!
@@ -85,8 +87,6 @@ pub func role_of(name: str, flags: int) -> str:
 ## An email account: IMAP to read, SMTP to send.
 pub class EmailSource: Source:
     let account: Account
-    ## Where fetched message files go: <store>/<account>/<key>/<uid>.eml.
-    let store: str
     ## The mail database every account shares.
     let mail: prism.Store
     let service: MailService
@@ -95,11 +95,10 @@ pub class EmailSource: Source:
     ## Folder store keys by path.
     var keys: map[str, str] = {}
 
-    pub func init(self, account: Account, store: str, mail: prism.Store) -> unit!:
+    pub func init(self, account: Account, mail: prism.Store) -> unit!:
         self.account = account
-        self.store = store
         self.mail = mail
-        self.service = mail_service.start_service(account.engine_line(store), mail)
+        self.service = mail_service.start_service(account.engine_line(), mail)
 
     pub func id(self) -> str:
         return self.account.id
@@ -127,21 +126,17 @@ pub class EmailSource: Source:
                                      total = listing.total(at), unseen = listing.unseen(at)))
         return result
 
-    func folder_directory(self, folder: str) -> str!:
-        let key = self.keys[folder] else ""
-        return paths.join(paths.join(self.store, self.account.id), key)
-
     pub func messages(self, folder: str) -> MessageIndex!:
         let key = self.keys[folder] else ""
         if key == "":
             return mail_index.read_index(self.mail, "")
         return mail_index.read_index(self.mail, f"{self.account.id}.{key}")
 
-    pub func message_file(self, folder: str, uid: int) -> str!:
-        if not (folder in self.keys):
-            return ""
-        let path = paths.join(self.folder_directory(folder), f"{uid}.eml")
-        return path if mail_index.exists(path) else ""
+    pub func message(self, folder: str, uid: int) -> mime.Message?!:
+        let key = self.keys[folder] else ""
+        if key == "":
+            return none
+        return mail_index.open_message(self.mail, f"{self.account.id}.{key}", uid)
 
     pub func fetch(self, folder: str, uid: int) -> unit!:
         self.service.submit(f"body\t{escape(folder)}\t{uid}")
@@ -156,12 +151,14 @@ pub class EmailSource: Source:
         self.service.submit(f"move\t{escape(folder)}\t{uid_set(uids)}\t{escape(target)}")
         return true
 
-    pub func send(self, file: str, sender: str, recipients: list[str]) -> unit!:
+    pub func send(self, message: str, sender: str, recipients: list[str]) -> unit!:
+        let queued = mail_db.queue(self.mail, self.account.id, message)
         let joined = recipients.join(",")
-        self.service.submit(f"send\t{escape(file)}\t{escape(sender)}\t{escape(joined)}")
+        self.service.submit(f"send\t{escape(queued)}\t{escape(sender)}\t{escape(joined)}")
 
-    pub func save_draft(self, file: str) -> unit!:
-        self.service.submit(f"draft\t{escape(file)}")
+    pub func save_draft(self, message: str) -> unit!:
+        let queued = mail_db.queue(self.mail, self.account.id, message)
+        self.service.submit(f"draft\t{escape(queued)}")
 
     pub func search(self, folder: str, query: str) -> unit!:
         self.service.submit(f"search\t{escape(folder)}\t{escape(query)}")

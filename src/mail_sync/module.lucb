@@ -7,18 +7,17 @@
 ## window only ever reads the store.
 ##
 ## Commands, tab-separated:   sync | body PATH UID | flags PATH UIDS ADD BITS |
-##                            move PATH UIDS TARGET | send FILE FROM RECIPIENTS | draft FILE |
+##                            move PATH UIDS TARGET | send QUEUED FROM RECIPIENTS | draft QUEUED |
 ##                            search PATH QUERY
 ## Events:                    online | offline TEXT | status TEXT | folders |
-##                            folder PATH | body PATH UID | sent FILE | unsent FILE TEXT |
-##                            saved FILE | unsaved FILE TEXT | found PATH UIDS |
+##                            folder PATH | body PATH UID | sent QUEUED | unsent QUEUED TEXT |
+##                            saved QUEUED | unsaved QUEUED TEXT | found PATH UIDS |
 ##                            error TEXT
 ##
 ## Fragments, in ORDER: module (imports, limits, the account), engine (the loop,
 ## commands, paths, selecting, waiting), folders (listing and syncing folders, bodies),
 ## changes (flags, moves, sending).
 import c
-from luce_std import files
 from luce_imap import imap
 import memory
 from luce_mime import mime
@@ -29,7 +28,7 @@ import time
 from luce_tls import stream as tls_stream
 from luce_prism import prism
 from engine_text import Buffer, Pool, Records, Fields, equal
-from mail_store import Row, Folder, put_key, ensure_path
+from mail_store import Row, Folder, put_key
 from mail_queue import Mailroom
 import mail_db
 
@@ -49,7 +48,6 @@ let retry_delay: u64 = 30 * 1000000000
 ## The account the engine serves, read from its configuration line.
 struct Account:
     var id: str
-    var root: str
     var imap_host: str
     var imap_port: u16
     var imap_security: imap.Security

@@ -1,14 +1,7 @@
-## What the mail store holds, and where message bodies live. Folders and the rows a
-## message list shows are kept in luce-prism (see mail_db); a fetched message's raw
-## text is a file beside it, since bodies are most of a mailbox's bytes:
-##
-##     <root>/<account>/<key>/<uid>.eml
-##
-## A folder's key is a hash of its server path, so any name makes a safe directory and
-## a valid prism identity.
-import c
+## The rows and folders the mail database holds (see mail_db), the store key of a
+## folder, and making the app's directory. A folder's key is a hash of its server
+## path, so any name makes a valid prism identity.
 from luce_std import files
-import strings
 from engine_text import Buffer
 
 ## One message's row in a folder index.
@@ -60,10 +53,3 @@ pub func ensure_path(path: str) -> !:
     for at in 1..<data.length + 1:
         if at == data.length or data[at] == '/':
             try files.ensure_directory((str)data[0..<at])
-
-## Delete directory `path` and everything in it, when it exists: a removed account's store.
-pub func remove_path(path: str) -> !:
-    let terminated = try strings.copy(path)
-    defer strings.release(terminated)
-    if files.exists((c.str)terminated):
-        try files.remove_tree((c.str)terminated)

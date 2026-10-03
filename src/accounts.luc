@@ -50,8 +50,8 @@ pub class Account:
         return self.name if self.name != "" else self.address
 
     ## The mail engine's configuration line (mail_service.start_service).
-    pub func engine_line(self, store: str) -> str:
-        let fields = [self.id, store, self.imap_host, f"{self.imap_port}", self.imap_security, self.user, self.password,
+    pub func engine_line(self) -> str:
+        let fields = [self.id, self.imap_host, f"{self.imap_port}", self.imap_security, self.user, self.password,
                       self.smtp_host, f"{self.smtp_port}", self.smtp_security, self.user, self.password]
         var escaped: list[str] = []
         for field in fields:

@@ -22,7 +22,8 @@ pub class Shown:
     pub var message_id: str = ""
     pub var references: str = ""
     pub var body: str = ""
-    pub var file: str = ""
+    ## Whether the message itself is shown, not just its place while it loads.
+    pub var loaded: bool = false
     ## Every message of the conversation shown, newest first (this one included).
     pub var members: list[int] = []
     ## Earlier messages of the conversation still being fetched.
@@ -81,13 +82,12 @@ pub class Reader:
         self.shown = Shown(source, folder, uid)
         self.text.set_text("Loading…")
 
-    ## Show the message in `file`. In a conversation, `earlier` holds the files of its
-    ## other messages, newest first ("" for one still being fetched); they follow the
-    ## newest, each under a rule with its sender and date, as Mail stacks them.
-    pub func show(self, source: int, folder: str, uid: int, file: str, members: list[int] = [], earlier: list[str] = []) -> unit!:
-        let message = mime.open(file)
+    ## Show `message`. In a conversation, `earlier` holds its other messages, newest
+    ## first (none for one still being fetched); they follow the newest, each under a
+    ## rule with its sender and date, as Mail stacks them.
+    pub func show(self, source: int, folder: str, uid: int, message: mime.Message, members: list[int] = [], earlier: list[mime.Message?] = []) -> unit!:
         let shown = Shown(source, folder, uid)
-        shown.file = file
+        shown.loaded = true
         shown.sender = message.address_line("From")
         shown.sender_address = message.address_mailbox("From", 0) if message.address_count("From") > 0 else ""
         shown.reply_to = message.address_line("Reply-To")
@@ -110,11 +110,11 @@ pub class Reader:
         shown.members = members
         var text = shown.body
         for other in earlier:
-            if other == "":
+            if other == none:
                 shown.waiting += 1
                 text = text + "\n\n──────── an earlier message is loading…"
                 continue
-            let previous = mime.open(other)
+            let previous = other else continue
             let date = clock.long_date(previous.date_seconds())
             text = text + f"\n\n──────── {previous.address_line("From", short = true)} · {date}\n\n" + previous.body_text(prefer_html = true)
         self.text.set_text(text)
@@ -127,7 +127,7 @@ pub class Reader:
             let size = message.part_size(part)
             let button = Button(f"@ {name}  {size_text(size * 3 // 4)}", font = self.font)
             self.connections.append(button.on_click(func () -> unit!:
-                self.save(file, part, name)))
+                self.save(message, part, name)))
             buttons.append(button)
         self.set_attachments(buttons)
 
@@ -139,13 +139,12 @@ pub class Reader:
         self.attachments.set_children(children)
         self.attachments.layout().set_visible(buttons.length > 0)
 
-    ## Ask where to save attachment `part` of the message in `file`, and save it.
-    func save(self, file: str, part: int, name: str) -> unit!:
+    ## Ask where to save attachment `part` of `message`, and save it.
+    func save(self, message: mime.Message, part: int, name: str) -> unit!:
         let app = self.app else return
         let target = app.save_file("Save attachment", name)
         if target == "":
             return
-        let message = mime.open(file)
         message.save_part(part, target)
 
 ## A byte count as people read it.

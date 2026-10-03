@@ -6,6 +6,7 @@ from sources import Source, FolderInfo, SourceEvent
 from mail_index import MessageIndex
 import mail_index
 from luce_prism import prism
+from luce_mime import mime
 from luce_ui.ui import Font
 
 ## A source whose folders the test sets.
@@ -22,17 +23,17 @@ class Listed: Source:
         return self.listed
     pub func messages(self, folder: str) -> MessageIndex!:
         return mail_index.read_index(prism.Store.memory(), "")
-    pub func message_file(self, folder: str, uid: int) -> str!:
-        return ""
+    pub func message(self, folder: str, uid: int) -> mime.Message?!:
+        return none
     pub func fetch(self, folder: str, uid: int) -> unit!:
         return
     pub func set_flags(self, folder: str, uids: list[int], add: bool, bits: int) -> unit!:
         return
     pub func move_to(self, folder: str, uids: list[int], role: str) -> bool!:
         return false
-    pub func send(self, file: str, sender: str, recipients: list[str]) -> unit!:
+    pub func send(self, message: str, sender: str, recipients: list[str]) -> unit!:
         return
-    pub func save_draft(self, file: str) -> unit!:
+    pub func save_draft(self, message: str) -> unit!:
         return
     pub func search(self, folder: str, query: str) -> unit!:
         return

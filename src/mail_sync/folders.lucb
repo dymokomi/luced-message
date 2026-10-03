@@ -70,10 +70,6 @@ extend Engine:
     mutating func sync_folder(at: usize) -> !:
         let folder = self.folders.at(at)
         let path = folder.path.bytes
-        var directory: Buffer
-        defer directory.close()
-        try self.folder_directory(path, &directory)
-        try ensure_path(directory.text_view())
         var identity: Buffer
         defer identity.close()
         try mail_db.folder_identity(self.account.id, folder.key.bytes, &identity)
@@ -173,46 +169,45 @@ extend Engine:
         return any
 
     ## Fetch INBOX's newest bodies that are not in the store yet.
-    mutating func prefetch(path: const u8[], ledger: const mail_db.Ledger*, batch: mail_db.Batch*) -> !:
+    mutating func prefetch(path: const u8[], ledger: mail_db.Ledger*, batch: mail_db.Batch*) -> !:
         var fetched: usize = 0
         var at = ledger.uids.length()
-        var file: Buffer
-        defer file.close()
         while at > 0 and fetched < prefetch_count:
             at -= 1
             if self.room.has_command() or self.room.stopped():
                 break
-            let uid = ledger.uids.at(at)
-            try self.message_file(path, uid, &file)
-            if files.exists(try file.terminated()):
+            if ledger.bodies.at(at):
                 continue
-            try self.store_body(uid, batch, &file)
+            let uid = ledger.uids.at(at)
+            if try self.store_body(uid, batch):
+                ledger.bodies.set(at, true)
+                # Each body is its own commit: bodies are large, and a frame holds
+                # references, not payloads, but a commit stays one message's worth.
+                try batch.flush()
             fetched += 1
 
-    ## Fetch message `uid` of the selected folder into `file`, and write the preview and
-    ## attachment mark its row shows.
-    mutating func store_body(uid: u32, batch: mail_db.Batch*, file: Buffer*) -> !:
+    ## Fetch message `uid` of the selected folder into the store, with the preview and
+    ## attachment mark its row shows. Whether the server had it.
+    mutating func store_body(uid: u32, batch: mail_db.Batch*) -> bool!:
         let data = try self.session.fetch_message(uid)
         if data.length == 0:
-            return
-        try files.write_atomic(try file.terminated(), data)
+            return false
+        try batch.set_raw(uid, data)
         var message = try mime.Message.read(data)
         defer message.close()
         try batch.set_body_summary(uid, try message.preview(), try message.attachment_count() > 0)
+        return true
 
     ## Fetch message `uid` of folder `path` for the window, which waits for it.
     mutating func fetch_body(path: const u8[], uid: u32) -> !:
-        var file: Buffer
-        defer file.close()
-        try self.message_file(path, uid, &file)
-        if not files.exists(try file.terminated()):
+        var identity: Buffer
+        defer identity.close()
+        try self.folder_identity_of(path, &identity)
+        if not try mail_db.has_body(self.store, identity.text_view(), uid):
             discard(try self.select(path))
-            var identity: Buffer
-            defer identity.close()
-            try self.folder_identity_of(path, &identity)
             var batch = try mail_db.Batch.begin(self.store, identity.text_view())
             defer batch.close()
-            try self.store_body(uid, &batch, &file)
+            discard(try self.store_body(uid, &batch))
             let changed = batch.count > 0
             try batch.commit()
             if changed:

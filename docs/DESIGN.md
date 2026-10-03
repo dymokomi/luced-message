@@ -58,7 +58,7 @@ What we reuse:
                                                       │ commands (copied text)
  ┌────────────────────────── sync worker thread (Base) ─▼──────────────────────┐
  │  Engine: one Session per account → luce-imap / luce-smtp → net / luce-tls   │
- │          writes the store (raw .eml + mailbox index), reports what changed  │
+ │          writes the mail database (prism), reports what changed             │
  └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -102,25 +102,28 @@ room is a Folder, an event is a message.
 settings.toml                     window, layout, preferences
 accounts.toml                     accounts: kind, name, address, servers, auth method
 mail.prism                        the mail database (luce-prism, durable Store)
-store/<account-id>/<folder-key>/<uid>.eml   raw RFC 5322 bytes, as fetched
+mail.prism.ext/                   prism's extents: payloads of 4 KiB or more, written once
 ```
 
-The mail database holds one prism identity per account and one per folder
-(`src/mail_db.lucb`):
+Everything the app stores about mail lives in the mail database, one prism identity
+per account, per folder and per outbox (`src/mail_db.lucb`):
 
 ```
 <account>          /f<key>   folder: path, name, delimiter, flags, order, total, unseen
 <account>.<key>    /state    uid_validity, uid_next, modseq
                    /m<uid>   message: uid, flags, date, size, attachment, sender,
-                             subject, message_id, in_reply_to, preview
+                             subject, message_id, in_reply_to, preview, and once
+                             fetched, raw (the RFC 5322 bytes)
+<account>.outbox   /o<n>     raw: a message waiting to be sent or filed as a draft
 ```
 
-Each engine thread writes its account in batch commits and bakes a folder after
-syncing it. The window reads snapshots through `Session.each_child`, which costs no
-Value per field. A folder has its own identity because a bake rewrites its
-identity's snapshot whole: syncing one folder then costs that folder. For the same
-reason bodies stay files. They are most of a mailbox's bytes and would be rewritten
-on every bake.
+Each engine thread writes its account in batch commits, a fetched body in a commit of
+its own, and bakes a folder after syncing it. A body of 4 KiB or more goes to a prism
+extent when it is committed; the journal and the snapshots carry a reference, so a
+bake costs a folder's list, not its bodies. The window reads the list through
+`Session.each_child`, which costs no Value per field and pages no body in, and reads
+one message's raw text when it is shown. The composer's message goes to the outbox;
+the engine sends or files it from there and removes it once it has.
 
 **Secrets.** Passwords are not stored in `accounts.toml`. v1 keeps them in
 `secrets` with mode 0600 for the local test server only. The next step is a

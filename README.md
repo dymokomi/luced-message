@@ -63,11 +63,10 @@ The [design notes](docs/DESIGN.md) give the whole picture. In short:
   (`src/mail_sync.lucb`). It keeps one IMAP session and syncs every folder: new
   headers, everyone's flags, and expunges. It fetches INBOX's newest bodies ahead
   of time, then waits in IDLE. Commands from the window run between those steps.
-- **The store:** the engine writes the mail database, `~/.luced-message/mail.prism`
-  (luce-prism), and the window only ever reads it. It holds an identity per account
-  listing its folders and one per folder holding its messages' list fields. Fetched
-  bodies are `.eml` files in `~/.luced-message/store`. Events tell the window what
-  changed.
+- **The store:** everything is in the mail database, `~/.luced-message/mail.prism`
+  (luce-prism): an identity per account listing its folders, one per folder holding
+  its messages' list fields and fetched raw messages, and an outbox. The engine
+  writes it and the window reads it; events tell the window what changed.
 - **Sources:** the window works with `Source` (`src/sources.luc`). EmailSource is
   the first kind; JMAP, Matrix or RSS would implement the same interface.
 
