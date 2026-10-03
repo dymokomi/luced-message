@@ -150,6 +150,11 @@ pub struct Engine:
             self.send(path.view(), sender.view(), recipients.view())
         elif equal(name, b"draft"):
             self.save_draft(path.view())
+        elif equal(name, b"search"):
+            var query: Buffer
+            defer query.close()
+            try fields.unescape(2, &query)
+            try self.search(path.view(), query.view())
 
     # mark: paths ================================================================================
 

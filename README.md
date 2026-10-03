@@ -43,6 +43,8 @@ Gmail, iCloud, Outlook and Fastmail all complete the handshake.
 - **Search:** the search field narrows the list by sender and subject.
 - **Composer:** Save Draft files the message in the account's Drafts folder, marked
   as a draft; Send hands it to the account's SMTP server and files a copy in Sent.
+- **Search:** typing narrows the list by sender and subject; Enter searches the full
+  text of the folder's messages on the server (IMAP SEARCH TEXT, UTF-8 included).
 - **Reader:** shows the plain-text body, or HTML mail as readable text. Each
   attachment has a button that saves it.
 - **Status line:** at the bottom of the window, it reports syncing, sending and
@@ -97,9 +99,6 @@ Then run `luced-message --home DIR`.
 ## Not yet
 
 - OAuth2 sign-in for Gmail and Outlook. The protocol side, XOAUTH2, is ready.
-- Conversation threading.
-- Server-side search.
-
 - Multiple selection.
 - HTML rendering through luce-browser-engine.
 - TLS 1.2-only servers.

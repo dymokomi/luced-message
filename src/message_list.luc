@@ -2,8 +2,9 @@
 ## columns for the unread dot, the flag, the attachment clip, the sender, the subject,
 ## a conversation's message count and the date. Organized by conversation (the default, as in Mail), a row is a whole
 ## thread: its newest message's sender, subject and date, the number of messages, and
-## a dot or flag when any message has one. Unread rows are bold. A filter narrows the
-## rows to those whose sender or subject holds its text.
+## a dot or flag when any message has one. Unread rows are bold. Typing narrows the rows
+## to those whose sender or subject holds the text; a server search (Enter) narrows them
+## to the messages whose text holds it.
 from ui import TableView, TableColumn, TableCell, CellAlign, Font
 from mail_index import MessageIndex
 import clock
@@ -20,6 +21,8 @@ pub class MessageList:
     ## Whether rows are conversations.
     pub var threaded: bool = true
     var filter: str = ""
+    ## The UIDs a server search matched, when one narrows the list.
+    var matches: set[int]? = none
     var shown_uid: int = -1
     ## Called with the UID of the (newest) message picked, or -1 when none is.
     pub var on_pick: func(int) -> unit!? = none
@@ -49,6 +52,12 @@ pub class MessageList:
         self.filter = text.trim().lower()
         self.rebuild()
 
+    ## Narrow the rows to the messages with `uids` (a server search's answer); a
+    ## conversation stays when any of its messages matched. `none` shows all again.
+    pub func set_matches(self, uids: set[int]?) -> unit!:
+        self.matches = uids
+        self.rebuild()
+
     ## Show conversations, or every message on its own.
     pub func set_threaded(self, threaded: bool) -> unit!:
         self.threaded = threaded
@@ -58,7 +67,19 @@ pub class MessageList:
     func lead(self, index: MessageIndex, row: int) -> int:
         return index.thread_member(row, 0) if self.threaded else row
 
-    func matches(self, index: MessageIndex, at: int) -> bool:
+    func matches(self, index: MessageIndex, row: int) -> bool:
+        if let wanted = self.matches:
+            if self.threaded:
+                var any = false
+                for member in 0..<index.thread_size(row):
+                    if index.uid(index.thread_member(row, member)) in wanted:
+                        any = true
+                if not any:
+                    return false
+            elif not (index.uid(row) in wanted):
+                return false
+            return true
+        let at = self.lead(index, row)
         return self.filter == "" or self.filter in index.sender(at).lower() or self.filter in index.subject(at).lower()
 
     func rebuild(self) -> unit!:
@@ -69,9 +90,9 @@ pub class MessageList:
             let count = index.thread_count() if self.threaded else index.count()
             for nth in 0..<count:
                 let row = nth if self.threaded else index.newest(nth)
-                let at = self.lead(index, row)
-                if not self.matches(index, at):
+                if not self.matches(index, row):
                     continue
+                let at = self.lead(index, row)
                 var unread = not mail_index.has(index.flags(at), seen_flag)
                 var flagged = mail_index.has(index.flags(at), flagged_flag)
                 var attachment = index.attachment(at)

@@ -55,7 +55,15 @@ pub class Panels:
         self.composer.on_status = self.tell
         self.account_dialog.on_save = self.save_accounts
         self.connections.append(self.search.on_change(func (text: str) -> unit!:
+            self.messages.set_matches(none)
             self.messages.set_filter(text)))
+        # Enter searches the whole text of the folder's messages on the server.
+        self.connections.append(self.search.on_commit(func (text: str) -> unit!:
+            if text.trim() == "":
+                self.messages.set_matches(none)
+                return
+            if let source = self.current():
+                source.search(self.folder, text.trim())))
         self.bind_actions()
         # The toolbar: square icon buttons, grouped as Mail groups them.
         let toolbar = HStack([Text("LUCED MESSAGE", font = font),
@@ -192,6 +200,19 @@ pub class Panels:
                 self.tell("Message sent.")
             "unsent":
                 self.tell(f"Not sent: {event.text}")
+            "found":
+                if position == self.source and event.folder == self.folder:
+                    var uids: set[int] = set()
+                    for part in event.text.split(","):
+                        if ":" in part:
+                            let ends = part.split(":")
+                            for uid in int(ends[0])..=int(ends[1]):
+                                uids.insert(uid)
+                        elif part != "":
+                            uids.insert(int(part))
+                    self.messages.set_filter("")
+                    self.messages.set_matches(uids)
+                    self.tell(f"{uids.length} message(s) match.")
             "saved":
                 self.tell("Draft saved.")
             "unsaved":

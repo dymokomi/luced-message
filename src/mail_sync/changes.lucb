@@ -117,3 +117,16 @@ extend Engine:
         discard(try self.session.append(drafts, data, imap.Flags.seen | imap.Flags.draft))
         self.post("saved", file)
         self.wants_full_sync = true
+
+extend Engine:
+    ## Ask the server which messages of folder `path` hold `query` in a header or the
+    ## body, and say so: `found PATH UIDS`.
+    mutating func search(path: const u8[], query: const u8[]) -> !:
+        discard(try self.select(path))
+        self.post("status", b"Searching")
+        let uids = try self.session.search_text((str)query)
+        var list: imap.Bytes
+        defer list.close()
+        try imap.write_set(uids, &list)
+        self.post("found", path, list.view())
+        self.post("status", b"")

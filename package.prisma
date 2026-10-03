@@ -27,7 +27,7 @@ def package "luced-message" {
 
     def dependency "luce-imap" {
         str owner = "dymokomi"
-        str version = "^0.1.0"
+        str version = "^0.1.2"
         str path = "../luce-imap"
     }
 
