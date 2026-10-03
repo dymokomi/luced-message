@@ -9,10 +9,14 @@
 ##     user = "alice@example.com"       password = "…"
 ##
 ## Security is "tls", "starttls" or "plain" (plain only for a local test server).
-## The password is kept in this file for now, readable only by its owner's account;
-## the system keychain takes it over next.
+## Passwords are never written to the file: they live in the system keychain (the
+## macOS Keychain, the Windows Credential Manager, the Linux Secret Service) under the
+## service `com.luciaos.luced-message` and the account's id. Only a local test account
+## may name its password in the file (`password = "…"`), so freshly built test
+## binaries need no keychain permission; the Accounts dialog never writes one.
 from toml import Table
 import files
+import keychain
 import paths
 
 ## The application's directory: settings, accounts and the message store.
@@ -35,6 +39,7 @@ pub class Account:
     pub var smtp_port: int = 587
     pub var smtp_security: str = "starttls"
     pub var user: str = ""
+    ## Read from and written to the keychain, never to accounts.toml.
     pub var password: str = ""
 
     pub func init(self, id: str):
@@ -61,14 +66,20 @@ pub func escape(text: str) -> str:
 func quoted(text: str) -> str:
     return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
+## The keychain service the passwords are kept under.
+pub let keychain_service: str = "com.luciaos.luced-message"
+
 ## Where the accounts live; reading never rewrites the file.
 pub class AccountStore:
     pub let path: str
+    ## The keychain service passwords go under (tests use their own).
+    let service: str
     ## Why the last load read nothing, or "".
     pub var warning: str = ""
 
-    pub func init(self, directory: str) -> unit!:
+    pub func init(self, directory: str, service: str = keychain_service) -> unit!:
         self.path = paths.join(directory, "accounts.toml")
+        self.service = service
 
     pub func load(self) -> list[Account]!:
         self.warning = ""
@@ -99,7 +110,8 @@ pub class AccountStore:
             account.smtp_port = int(table.number(base + "smtp_port", 587.0, 1.0, 65535.0))
             account.smtp_security = table.string(base + "smtp_security", "starttls")
             account.user = table.string(base + "user", account.address)
-            account.password = table.string(base + "password", "")
+            let written = table.string(base + "password", "")
+            account.password = written if written != "" else self.password(account.id)
             accounts.append(account)
         return accounts
 
@@ -110,8 +122,22 @@ pub class AccountStore:
             text = text + f"kind = {quoted(account.kind)}\nname = {quoted(account.name)}\naddress = {quoted(account.address)}\n"
             text = text + f"imap_host = {quoted(account.imap_host)}\nimap_port = {account.imap_port}\nimap_security = {quoted(account.imap_security)}\n"
             text = text + f"smtp_host = {quoted(account.smtp_host)}\nsmtp_port = {account.smtp_port}\nsmtp_security = {quoted(account.smtp_security)}\n"
-            text = text + f"user = {quoted(account.user)}\npassword = {quoted(account.password)}\n"
+            text = text + f"user = {quoted(account.user)}\n"
+            keychain.store(self.service, account.id, account.password)
         files.write_text(self.path, text)
+
+    ## The password kept for account `id`, or "" when the keychain has none or cannot
+    ## be reached (said in `warning`).
+    func password(self, id: str) -> str:
+        let found = keychain.load(self.service, id) catch failure:
+            if failure.code != keychain.not_found:
+                self.warning = f"The keychain could not be read: {failure.message}"
+            recover ""
+        return found
+
+    ## Forget the password kept for account `id`.
+    pub func forget(self, id: str) -> unit!:
+        keychain.remove(self.service, id)
 
 ## An id for a new account from its address: letters and digits, `_` for the rest.
 pub func account_id(address: str, taken: list[str]) -> str:

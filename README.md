@@ -15,7 +15,8 @@ luc install dymokomi/luced-message
 luc run --release
 ```
 
-Mailbox › Accounts… (Cmd/Ctrl-,) adds an account. You need the address, the
+Mailbox › Accounts… (Cmd/Ctrl-,) adds an account. Passwords live in the system keychain
+([luce-keychain](https://github.com/dymokomi/luce-keychain)), never in `accounts.toml`. You need the address, the
 password (use an app password for Gmail, iCloud and Fastmail), the IMAP server
 (port 993, `tls`) and the SMTP server (port 587, `starttls`, or 465, `tls`). TLS
 1.3 is handled natively by [luce-tls](https://github.com/dymokomi/luce-tls).
@@ -83,14 +84,16 @@ imap_security = "plain"
 smtp_host = "127.0.0.1"
 smtp_port = 3025
 smtp_security = "plain"
-password = "secret"
 ```
+
+plus `password = "secret"`: a local test account may name its password in the file, so
+freshly built binaries need no keychain permission. Real accounts never do; Mailbox ›
+Accounts… keeps their passwords in the keychain.
 
 Then run `luced-message --home DIR`.
 
 ## Not yet
 
-- The password is kept in `accounts.toml`; it should move to the system keychain.
 - OAuth2 sign-in for Gmail and Outlook. The protocol side, XOAUTH2, is ready.
 - Conversation threading.
 - Server-side search.

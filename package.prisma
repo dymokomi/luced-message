@@ -43,6 +43,12 @@ def package "luced-message" {
         str path = "../luce-tls"
     }
 
+    def dependency "luce-keychain" {
+        str owner = "dymokomi"
+        str version = "^0.1.0"
+        str path = "../luce-keychain"
+    }
+
     def dependency "luce-config" {
         str owner = "dymokomi"
         str version = "^0.1.4"

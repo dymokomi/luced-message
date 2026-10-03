@@ -28,10 +28,10 @@ pub class MessageList:
         let columns = [TableColumn(title = "", width = 28.0, minimum = 28.0, align = CellAlign.center),
                        TableColumn(title = "", width = 28.0, minimum = 28.0, align = CellAlign.center),
                        TableColumn(title = "", width = 28.0, minimum = 28.0, align = CellAlign.center),
-                       TableColumn(title = "From", width = 190.0),
+                       TableColumn(title = "From", width = 150.0),
                        TableColumn(title = "Subject", weight = 1.0),
                        TableColumn(title = "", width = 36.0, minimum = 28.0, align = CellAlign.right),
-                       TableColumn(title = "Date", width = 110.0, align = CellAlign.right)]
+                       TableColumn(title = "Date", width = 96.0, align = CellAlign.right)]
         self.table = TableView(columns, [], font = font)
 
     ## Show `index`'s messages, keeping the picked message when it is still there.

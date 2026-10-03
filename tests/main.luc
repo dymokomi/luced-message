@@ -12,7 +12,7 @@ func check(condition: bool, what: str):
     assert(condition, what)
 
 func accounts_round_trip(directory: str) -> unit!:
-    let store = AccountStore(directory)
+    let store = AccountStore(directory, service = "com.luciaos.luced-message.test")
     let work = Account("work")
     work.name = "Work"
     work.address = "alice@example.com"
@@ -36,6 +36,11 @@ func accounts_round_trip(directory: str) -> unit!:
     check(escape("a\tb\\c\nd") == "a\\tb\\\\c\\nd", "engine fields are escaped")
     let line = work.engine_line("/store")
     check(line.split("\t").length == 12, "the engine line has twelve fields")
+    let written = files.read_text(store.path)
+    check(not ("password" in written), "no password in accounts.toml")
+    store.forget("work")
+    store.forget("local")
+    check(store.load()[0].password == "", "a forgotten password reads as empty")
 
 func index_reading(directory: str) -> unit!:
     let path = paths.join(directory, "index")
