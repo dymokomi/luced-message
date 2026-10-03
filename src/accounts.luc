@@ -116,6 +116,7 @@ pub class AccountStore:
         return accounts
 
     pub func save(self, accounts: list[Account]) -> unit!:
+        self.warning = ""
         var text = "# luced-message accounts\n"
         for account in accounts:
             text = text + f"\n[{account.id}]\n"
@@ -123,7 +124,9 @@ pub class AccountStore:
             text = text + f"imap_host = {quoted(account.imap_host)}\nimap_port = {account.imap_port}\nimap_security = {quoted(account.imap_security)}\n"
             text = text + f"smtp_host = {quoted(account.smtp_host)}\nsmtp_port = {account.smtp_port}\nsmtp_security = {quoted(account.smtp_security)}\n"
             text = text + f"user = {quoted(account.user)}\n"
-            keychain.store(self.service, account.id, account.password)
+            # Without a keychain the account is still saved; load() says the password is missing.
+            keychain.store(self.service, account.id, account.password) catch failure:
+                self.warning = f"The keychain could not keep the password: {failure.message}"
         files.write_text(self.path, text)
 
     ## The password kept for account `id`, or "" when the keychain has none or cannot

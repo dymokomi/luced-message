@@ -26,10 +26,14 @@ func accounts_round_trip(directory: str) -> unit!:
     local.imap_port = 3143
     local.imap_security = "plain"
     store.save([work, local])
+    # CI's Linux has no Secret Service: the accounts still save, without passwords.
+    let keychain_here = store.warning == ""
+    if not keychain_here:
+        print(f"keychain unavailable here: {store.warning}")
     let loaded = store.load()
-    check(store.warning == "", f"accounts read back: {store.warning}")
+    check(not keychain_here or store.warning == "", f"accounts read back: {store.warning}")
     check(loaded.length == 2, "two accounts")
-    check(loaded[0].id == "work" and loaded[0].password == "pa\"ss\\word", "the password survives quoting")
+    check(loaded[0].id == "work" and loaded[0].password == ("pa\"ss\\word" if keychain_here else ""), "the password survives quoting")
     check(loaded[1].imap_port == 3143 and loaded[1].imap_security == "plain", "ports and security")
     check(loaded[1].title() == "bob@example.test", "a title falls back to the address")
     check(account_id("Alice.Smith@Example.com", ["alice_smith_example_com"]) == "alice_smith_example_com_2", "ids are unique")
@@ -38,9 +42,22 @@ func accounts_round_trip(directory: str) -> unit!:
     check(line.split("\t").length == 12, "the engine line has twelve fields")
     let written = files.read_text(store.path)
     check(not ("password" in written), "no password in accounts.toml")
-    store.forget("work")
-    store.forget("local")
-    check(store.load()[0].password == "", "a forgotten password reads as empty")
+    if keychain_here:
+        store.forget("work")
+        store.forget("local")
+        check(store.load()[0].password == "", "a forgotten password reads as empty")
+
+## A keychain that refuses the password still leaves the account saved.
+func accounts_without_keychain(directory: str) -> unit!:
+    let folder = paths.join(directory, "refusing")
+    files.ensure_directory(folder)
+    let store = AccountStore(folder, service = "")
+    let work = Account("work")
+    work.address = "alice@example.com"
+    work.password = "secret"
+    store.save([work])
+    check(store.warning != "", "the refused password is reported")
+    check(store.load().length == 1, "the account is saved anyway")
 
 func index_reading(directory: str) -> unit!:
     let path = paths.join(directory, "index")
@@ -85,6 +102,7 @@ pub func main(arguments: list[str]) -> int!:
     let directory = arguments[0] if arguments.length > 0 else "/tmp/luced-message-tests"
     files.ensure_directory(directory)
     accounts_round_trip(directory)
+    accounts_without_keychain(directory)
     index_reading(directory)
     conversations(directory)
     sources_tests.run()
