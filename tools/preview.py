@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Capture a real Metal frame of the window, after its sources synced, as a PNG.
 
-    tools/preview.py --home DIR [--position N] [--output build/preview.png]
+    tools/preview.py --home DIR [--position N] [--search TEXT] [--output build/preview.png]
 
 DIR holds accounts.toml (and the store, which the run fills). Uses luce-gpu's
 test observer to read the drawable back; no screen access is needed."""
@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--home", type=Path, required=True)
 parser.add_argument("--position", type=int, default=0)
+parser.add_argument("--search", default="", help="run a server search before the capture")
 parser.add_argument("--output", type=Path, default=ROOT / "build/preview.png")
 arguments = parser.parse_args()
 
@@ -34,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix="luced-message-preview-") as temporary:
     environment = dict(os.environ, LUCE_CACHE=str(ROOT / "build/cache"))
     subprocess.run([os.environ.get("LUCE", str(ROOT.parent / "luce/build/luce")), "build", str(project / "src/main.luc"), "--native", "-o", str(binary)], check=True, env=environment, timeout=600)
     ppm = project / "preview.ppm"
-    subprocess.run([str(binary), str(ppm), str(arguments.home.resolve()), str(arguments.position)], check=True, timeout=120)
+    subprocess.run([str(binary), str(ppm), str(arguments.home.resolve()), str(arguments.position)] + ([arguments.search] if arguments.search else []), check=True, timeout=120)
     header, dimensions, maximum, pixels = ppm.read_bytes().split(b"\n", 3)
     width, height = map(int, dimensions.split())
     rows = b"".join(b"\0" + pixels[y * width * 3:(y + 1) * width * 3] for y in range(height))

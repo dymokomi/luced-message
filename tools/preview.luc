@@ -1,13 +1,14 @@
 ## Capture the window after its sources have synced, for tools/preview.py:
-##     preview OUTPUT.ppm HOME [message-position]
+##     preview OUTPUT.ppm HOME [message-position [server-search]]
 ## Waits until the first folder's messages are listed, picks one, lets the reader
-## show it, then reads the frame back.
+## show it (and runs the search, when given), then reads the frame back.
 import probe
 from app import LuceMessage
 
 pub func main(arguments: list[str]) -> int!:
     let messenger = LuceMessage(arguments[1])
     let position = int(arguments[2]) if arguments.length > 2 else 0
+    let query = arguments[3] if arguments.length > 3 else ""
     var ticks = 0
     var listed = -1
     var capture = -1
@@ -20,6 +21,8 @@ pub func main(arguments: list[str]) -> int!:
                 discard(failure)
             if messenger.panels.messages.picked_uid() >= 0:
                 listed = ticks
+                if query != "":
+                    messenger.panels.search_server(query)
         if listed >= 0 and capture < 0 and (ticks - listed > 30 or ticks > 400):
             capture = 0
         if ticks > 600:

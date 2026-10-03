@@ -25,6 +25,8 @@ with tempfile.TemporaryDirectory(prefix='luced-message-tests-') as temp:
         manifest = manifest.replace(f'"../{name}"', json.dumps(str(ROOT.parent / name)))
     manifest = manifest.replace('def package "luced-message"', 'def package "luced-message-tests"').replace('str kind = "application"', 'str kind = "tool"')
     (project / 'package.prisma').write_text(manifest)
+    # The app itself, which the tests do not import all of.
+    subprocess.run([str(arguments.luce), 'build', str(ROOT / 'src/main.luc'), '--native', '-o', str(Path(temp) / 'luced-message')], env=environment, check=True, timeout=600)
     binary = Path(temp) / 'tests'
     subprocess.run([str(arguments.luce), 'build', str(project / 'src/main.luc'), '--native', '-o', str(binary)], env=environment, check=True, timeout=600)
     subprocess.run([str(binary), str(Path(temp) / 'scratch')], env=environment, check=True, timeout=120)

@@ -22,7 +22,7 @@ pub class MessageList:
     pub var threaded: bool = true
     var filter: str = ""
     ## The UIDs a server search matched, when one narrows the list.
-    var matches: set[int]? = none
+    var found: set[int]? = none
     var shown_uid: int = -1
     ## Called with the UID of the (newest) message picked, or -1 when none is.
     pub var on_pick: func(int) -> unit!? = none
@@ -55,7 +55,7 @@ pub class MessageList:
     ## Narrow the rows to the messages with `uids` (a server search's answer); a
     ## conversation stays when any of its messages matched. `none` shows all again.
     pub func set_matches(self, uids: set[int]?) -> unit!:
-        self.matches = uids
+        self.found = uids
         self.rebuild()
 
     ## Show conversations, or every message on its own.
@@ -67,8 +67,8 @@ pub class MessageList:
     func lead(self, index: MessageIndex, row: int) -> int:
         return index.thread_member(row, 0) if self.threaded else row
 
-    func matches(self, index: MessageIndex, row: int) -> bool:
-        if let wanted = self.matches:
+    func shows(self, index: MessageIndex, row: int) -> bool:
+        if let wanted = self.found:
             if self.threaded:
                 var any = false
                 for member in 0..<index.thread_size(row):
@@ -90,7 +90,7 @@ pub class MessageList:
             let count = index.thread_count() if self.threaded else index.count()
             for nth in 0..<count:
                 let row = nth if self.threaded else index.newest(nth)
-                if not self.matches(index, row):
+                if not self.shows(index, row):
                     continue
                 let at = self.lead(index, row)
                 var unread = not mail_index.has(index.flags(at), seen_flag)
