@@ -14,7 +14,10 @@ struct Entry:
 pub class Sidebar:
     pub let view: ListView
     var entries: list[Entry] = []
-    var shown: int = -1
+    ## The folder last reported to `on_pick`, by source and path: a row index would go
+    ## stale when the rows are rebuilt.
+    var shown_source: int = -1
+    var shown_folder: str = ""
     ## Called with the source's position and the folder's path when a folder is picked.
     pub var on_pick: func(int, str) -> unit!? = none
 
@@ -42,7 +45,6 @@ pub class Sidebar:
             for (at, entry) in entries.indexed():
                 if entry.source == previous.source and entry.folder == previous.folder:
                     self.view.select(at)
-                    self.shown = at
 
     ## The picked row, if any.
     func selected(self) -> Entry?:
@@ -58,16 +60,17 @@ pub class Sidebar:
                 self.view.select(at)
                 return
 
-    ## Tell `on_pick` when the selection moved; called every frame.
+    ## Tell `on_pick` when another folder is selected; called every frame. It compares
+    ## folders, not rows, so a refresh between a pick and this poll cannot hide the pick.
     pub func poll(self) -> unit!:
-        let at = self.view.selected_index()
-        if at == self.shown:
-            return
-        self.shown = at
         let entry = self.selected() else return
         if entry.folder == "":
             # A title row stands for its Inbox.
             self.pick(entry.source, "")
             return
+        if entry.source == self.shown_source and entry.folder == self.shown_folder:
+            return
+        self.shown_source = entry.source
+        self.shown_folder = entry.folder
         if let pick = self.on_pick:
             pick(entry.source, entry.folder)

@@ -8,6 +8,7 @@ import luce_std.paths
 import sources_tests
 import composer_tests
 import list_tests
+import sidebar_tests
 
 func check(condition: bool, what: str):
     assert(condition, what)
@@ -109,6 +110,7 @@ pub func main(arguments: list[str]) -> int!:
     sources_tests.run()
     composer_tests.run()
     list_tests.run(directory)
+    sidebar_tests.run()
     check(clock.list_date(0) == "", "no date")
     print("PASS luced-message")
     return 0

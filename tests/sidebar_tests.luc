@@ -1,0 +1,75 @@
+## The sidebar reports each folder picked once, even when the rows are rebuilt between
+## the pick and the next poll (WINDOWS trace, 2026-10-03: a second folders event in the
+## same tick hid the automatic Inbox pick, so no folder was ever shown).
+from sidebar import Sidebar
+from sources import Source, FolderInfo, SourceEvent
+from mail_index import MessageIndex
+import mail_index
+from luce_ui.ui import Font
+
+## A source whose folders the test sets.
+class Listed: Source:
+    pub var listed: list[FolderInfo] = []
+
+    pub func id(self) -> str:
+        return "test"
+    pub func title(self) -> str:
+        return "Test"
+    pub func address(self) -> str:
+        return "test@example.test"
+    pub func folders(self) -> list[FolderInfo]!:
+        return self.listed
+    pub func messages(self, folder: str) -> MessageIndex!:
+        return mail_index.read_index("/nonexistent/index")
+    pub func message_file(self, folder: str, uid: int) -> str!:
+        return ""
+    pub func fetch(self, folder: str, uid: int) -> unit!:
+        return
+    pub func set_flags(self, folder: str, uids: list[int], add: bool, bits: int) -> unit!:
+        return
+    pub func move_to(self, folder: str, uids: list[int], role: str) -> bool!:
+        return false
+    pub func send(self, file: str, sender: str, recipients: list[str]) -> unit!:
+        return
+    pub func save_draft(self, file: str) -> unit!:
+        return
+    pub func search(self, folder: str, query: str) -> unit!:
+        return
+    pub func refresh(self) -> unit!:
+        return
+    pub func poll(self) -> list[SourceEvent]!:
+        return []
+    pub func close(self):
+        return
+
+pub func run() -> unit!:
+    let source = Listed()
+    let sidebar = Sidebar(Font())
+    var picked: list[str] = []
+    sidebar.on_pick = func (position: int, folder: str) -> unit!:
+        picked.append(f"{position}:{folder}")
+    # Offline: only the account's title row, so there is no Inbox to pick.
+    sidebar.refresh([source])
+    sidebar.pick(0, "")
+    sidebar.poll()
+    assert(picked.length == 0, "nothing to pick offline")
+    # Online: the folders arrive, the Inbox is picked, and a second folders event
+    # rebuilds the rows before the poll.
+    source.listed = [FolderInfo(path = "INBOX", name = "Inbox", role = "inbox", depth = 0, total = 3, unseen = 1),
+                     FolderInfo(path = "Sent", name = "Sent", role = "sent", depth = 0, total = 0, unseen = 0)]
+    sidebar.refresh([source])
+    sidebar.pick(0, "")
+    sidebar.refresh([source])
+    sidebar.poll()
+    assert(picked == ["0:INBOX"], f"the Inbox pick survives a refresh: {picked}")
+    sidebar.poll()
+    sidebar.refresh([source])
+    sidebar.poll()
+    assert(picked.length == 1, "a folder is reported once")
+    sidebar.pick(0, "Sent")
+    sidebar.poll()
+    # The title row stands for the Inbox, which is picked again.
+    sidebar.view.select(0)
+    sidebar.poll()
+    sidebar.poll()
+    assert(picked == ["0:INBOX", "0:Sent", "0:INBOX"], f"picks in order: {picked}")
