@@ -2,7 +2,7 @@
 ## color space, kept local so the shared UI package stays neutral.
 from luce_ui.ui import Theme
 from luce_gpu.gpu import Color
-import luce_color.transfer
+from luce_color import transfer
 
 ## A grey from an sRGB byte value.
 pub func grey(byte: float) -> Color:

@@ -4,7 +4,7 @@
 ## `\t`, `\n` and `\\` escaped inside a field.
 import c
 import memory
-import luce_std.utf8
+from luce_std import utf8
 
 ## A growable run of bytes on the heap.
 pub struct Buffer:

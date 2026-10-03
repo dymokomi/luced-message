@@ -13,7 +13,7 @@ from message_list import MessageList
 from reader import Reader
 from composer import Composer
 from account_dialog import AccountDialog
-import luce_std.paths
+from luce_std import paths
 import mail_index
 import mail_store
 

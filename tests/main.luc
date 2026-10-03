@@ -4,8 +4,7 @@ from accounts import Account, AccountStore, account_id, escape
 import mail_index
 import mail_store
 import clock
-import luce_std.files
-import luce_std.paths
+from luce_std import files, paths
 import sources_tests
 import composer_tests
 import list_tests

@@ -7,10 +7,9 @@ from luce_ui.ui import Dialog, HStack, Text, TextField, TextEditor, Button, Spac
 from interop import Connection
 from reader import Shown
 from sources import Source
-import luce_mime.mime
+from luce_mime import mime
 import clock
-import luce_std.files
-import luce_std.paths
+from luce_std import files, paths
 import time
 
 pub class Composer:

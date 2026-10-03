@@ -3,10 +3,10 @@
 from luce_ui.ui import Application, Font
 from panels import Panels
 import theme
-import luce_std.crash
+from luce_std import crash
 
 ## The version crash reports carry; keep it equal to package.prisma's.
-pub let version: str = "0.2.1"
+pub let version: str = "0.2.2"
 
 pub class LuceMessage:
     pub let app: Application

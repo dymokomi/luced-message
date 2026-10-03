@@ -4,7 +4,7 @@
 ## says it has arrived.
 from luce_ui.ui import VStack, HStack, Text, TextEditor, Rule, Spacer, Button, Font, Application, Widget
 from interop import Connection
-import luce_mime.mime
+from luce_mime import mime
 import clock
 
 ## What the reader shows, for replying and forwarding.

@@ -15,9 +15,9 @@
 ## may name its password in the file (`password = "…"`), so freshly built test
 ## binaries need no keychain permission; the Accounts dialog never writes one.
 from luce_config.toml import Table
-import luce_std.files
-import luce_keychain.keychain
-import luce_std.paths
+from luce_std import files
+from luce_keychain import keychain
+from luce_std import paths
 
 ## The application's directory: settings, accounts and the message store.
 pub func home() -> str!:

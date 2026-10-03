@@ -5,7 +5,7 @@
 import platform
 import time
 from engine_text import Buffer
-import luce_mime.mime
+from luce_mime import mime
 
 ## The C library's broken-down time on 64-bit POSIX systems.
 struct Tm:
