@@ -22,6 +22,7 @@ pub class LuceMessage:
         self.app = Application(self.panels.body, title = "Luced Message", width = 1400, height = 860, theme = theme.editor_theme())
         self.panels.app = self.app
         self.panels.reader.app = self.app
+        self.panels.composer.app = self.app
         self.app.set_commands(self.panels.actions.all)
         self.app.set_error_handler(self.panels.tell)
         self.ticking = self.app.every(0.1, func () -> unit!:

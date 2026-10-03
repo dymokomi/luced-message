@@ -3,7 +3,7 @@
 ## Mail does: Re:/Fwd: subjects, the original quoted under an attribution line, and a
 ## reply threaded by In-Reply-To and References. Sending writes the message (built
 ## by luce-mime's Draft) into the outbox and hands it to the source's engine.
-from ui import Dialog, HStack, Text, TextField, TextEditor, Button, Spacer, Font, Size
+from ui import Dialog, HStack, Text, TextField, TextEditor, Button, Spacer, Font, Size, Application
 from interop import Connection
 from reader import Shown
 from sources import Source
@@ -30,6 +30,11 @@ pub class Composer:
     var reply_references: str = ""
     ## Where sent messages wait for the engine.
     let outbox: str
+    ## Files to attach, as paths.
+    var attachments: list[str] = []
+    let attached: Text
+    ## The window, for its file dialog.
+    pub var app: Application? = none
     ## Called with a line for the status bar.
     pub var on_status: func(str) -> unit!? = none
 
@@ -44,6 +49,9 @@ pub class Composer:
         self.editor = TextEditor("", line_numbers = false, font = font, wrap = true)
         self.editor.layout().set_limits(Size(560.0, 320.0), Size(16384.0, 420.0))
         self.notice = Text("", font = font, muted = true)
+        self.attached = Text("", font = font, muted = true)
+        let attach = Button("Attach…", font = font)
+        self.connections.append(attach.on_click(self.attach))
         let send = Button("Send", font = font)
         let save = Button("Save Draft", font = font)
         let cancel = Button("Cancel", font = font)
@@ -52,6 +60,7 @@ pub class Composer:
         self.connections.append(cancel.on_click(self.cancel))
         self.dialog = Dialog([Text("New Message", font = font), self.from_line, self.row("To", self.to_field), self.row("Cc", self.cc_field),
                               self.row("Bcc", self.bcc_field), self.row("Subject", self.subject_field), self.editor,
+                              HStack([attach, self.attached, Spacer()], spacing = 8.0),
                               HStack([self.notice, Spacer(), cancel, save, send], spacing = 8.0)], width = 760.0)
         self.connections.append(self.dialog.on_cancel(self.cancel))
 
@@ -99,7 +108,22 @@ pub class Composer:
         self.subject_field.set_text(subject)
         self.editor.set_text(body)
         self.notice.set_text("")
+        self.attachments = []
+        self.attached.set_text("")
         self.dialog.open()
+
+    ## Choose files to attach with the desktop's open dialog.
+    func attach(self) -> unit!:
+        let app = self.app else return
+        let chosen = app.open_files("Attach files")
+        for path in chosen.lines():
+            if path != "" and not (path in self.attachments):
+                self.attachments.append(path)
+        var names: list[str] = []
+        for path in self.attachments:
+            let parts = path.replace("\\", "/").split("/")
+            names.append(parts[parts.length - 1])
+        self.attached.set_text(names.join(", "))
 
     func cancel(self) -> unit!:
         self.dialog.hide()
@@ -121,6 +145,10 @@ pub class Composer:
         draft.set_text(self.editor.text())
         if self.reply_id != "":
             draft.set_reply(self.reply_id, self.reply_references)
+        for path in self.attachments:
+            draft.attach_file(path) catch failure:
+                self.notice.set_text(f"Could not attach {path}: {failure.message}")
+                return none
         return draft
 
     ## Write `draft` into the outbox; its file.
