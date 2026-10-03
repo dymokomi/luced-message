@@ -6,7 +6,7 @@ import theme
 import luce_std.crash
 
 ## The version crash reports carry; keep it equal to package.prisma's.
-pub let version: str = "0.2.0"
+pub let version: str = "0.2.1"
 
 pub class LuceMessage:
     pub let app: Application
