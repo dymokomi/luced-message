@@ -148,6 +148,8 @@ pub struct Engine:
             defer recipients.close()
             try fields.unescape(3, &recipients)
             self.send(path.view(), sender.view(), recipients.view())
+        elif equal(name, b"draft"):
+            self.save_draft(path.view())
 
     # mark: paths ================================================================================
 

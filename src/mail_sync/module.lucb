@@ -7,9 +7,10 @@
 ## only ever reads files.
 ##
 ## Commands, tab-separated:   sync | body PATH UID | flags PATH UIDS ADD BITS |
-##                            move PATH UIDS TARGET | send FILE FROM RECIPIENTS
+##                            move PATH UIDS TARGET | send FILE FROM RECIPIENTS | draft FILE
 ## Events:                    online | offline TEXT | status TEXT | folders |
 ##                            folder PATH | body PATH UID | sent FILE | unsent FILE TEXT |
+##                            saved FILE | unsaved FILE TEXT |
 ##                            error TEXT
 ##
 ## Fragments, in ORDER: module (imports, limits, the account), engine (the loop,

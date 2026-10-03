@@ -45,12 +45,14 @@ pub class Composer:
         self.editor.layout().set_limits(Size(560.0, 320.0), Size(16384.0, 420.0))
         self.notice = Text("", font = font, muted = true)
         let send = Button("Send", font = font)
+        let save = Button("Save Draft", font = font)
         let cancel = Button("Cancel", font = font)
         self.connections.append(send.on_click(self.send))
+        self.connections.append(save.on_click(self.save_draft))
         self.connections.append(cancel.on_click(self.cancel))
         self.dialog = Dialog([Text("New Message", font = font), self.from_line, self.row("To", self.to_field), self.row("Cc", self.cc_field),
                               self.row("Bcc", self.bcc_field), self.row("Subject", self.subject_field), self.editor,
-                              HStack([self.notice, Spacer(), cancel, send], spacing = 8.0)], width = 760.0)
+                              HStack([self.notice, Spacer(), cancel, save, send], spacing = 8.0)], width = 760.0)
         self.connections.append(self.dialog.on_cancel(self.cancel))
 
     func row(self, label: str, field: TextField) -> HStack!:
@@ -102,31 +104,53 @@ pub class Composer:
     func cancel(self) -> unit!:
         self.dialog.hide()
 
-    ## Build the message, put it in the outbox and ask the source to send it.
-    func send(self) -> unit!:
-        let source = self.source else return
+    ## The message as written so far, encoded; none when it names no sender.
+    func encoded(self, source: Source, drafting: bool) -> mime.Draft?!:
         let draft = mime.create_draft()
         draft.set_from("", source.address())
         var count = draft.add_recipients("to", self.to_field.text())
         count += draft.add_recipients("cc", self.cc_field.text())
         count += draft.add_recipients("bcc", self.bcc_field.text())
-        if count == 0:
+        if count == 0 and not drafting:
             self.notice.set_text("Add a recipient first.")
-            return
+            return none
+        if count == 0:
+            # A draft may name no one yet; SMTP never sees it.
+            draft.add_to("", source.address())
         draft.set_subject(self.subject_field.text())
         draft.set_text(self.editor.text())
         if self.reply_id != "":
             draft.set_reply(self.reply_id, self.reply_references)
+        return draft
+
+    ## Write `draft` into the outbox; its file.
+    func write_out(self, draft: mime.Draft) -> str!:
         let message = draft.encode()
         files.ensure_directory(self.outbox)
         let file = paths.join(self.outbox, f"{time.now()}.eml")
         files.write_text(file, message)
+        return file
+
+    ## Build the message, put it in the outbox and ask the source to send it.
+    func send(self) -> unit!:
+        let source = self.source else return
+        let draft = self.encoded(source, false) else return
+        let file = self.write_out(draft)
         var recipients: list[str] = []
         for at in 0..<draft.recipient_count():
             recipients.append(draft.recipient(at))
         source.send(file, draft.sender(), recipients)
         if let status = self.on_status:
             status("Sending…")
+        self.dialog.hide()
+
+    ## Keep the message as a draft in the account's Drafts folder.
+    func save_draft(self) -> unit!:
+        let source = self.source else return
+        let draft = self.encoded(source, true) else return
+        source.save_draft(self.write_out(draft))
+        if let status = self.on_status:
+            status("Saving the draft…")
         self.dialog.hide()
 
 ## `subject` with `prefix` (Re:, Fwd:) unless it has it already.

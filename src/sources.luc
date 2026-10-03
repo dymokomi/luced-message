@@ -52,6 +52,8 @@ pub interface Source:
     ## source has no such folder.
     func move_to(self, folder: str, uids: list[int], role: str) -> bool!
     func send(self, file: str, sender: str, recipients: list[str]) -> unit!
+    ## Keep the message in `file` as a draft (the account's Drafts folder).
+    func save_draft(self, file: str) -> unit!
     func refresh(self) -> unit!
     func poll(self) -> list[SourceEvent]!
     func close(self)
@@ -146,6 +148,9 @@ pub class EmailSource: Source:
     pub func send(self, file: str, sender: str, recipients: list[str]) -> unit!:
         let joined = recipients.join(",")
         self.service.submit(f"send\t{escape(file)}\t{escape(sender)}\t{escape(joined)}")
+
+    pub func save_draft(self, file: str) -> unit!:
+        self.service.submit(f"draft\t{escape(file)}")
 
     pub func refresh(self) -> unit!:
         self.service.submit("sync")

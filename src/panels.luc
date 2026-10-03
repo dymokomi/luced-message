@@ -192,6 +192,10 @@ pub class Panels:
                 self.tell("Message sent.")
             "unsent":
                 self.tell(f"Not sent: {event.text}")
+            "saved":
+                self.tell("Draft saved.")
+            "unsaved":
+                self.tell(f"Draft not saved: {event.text}")
             _:
                 if event.text != "":
                     self.tell(event.text)

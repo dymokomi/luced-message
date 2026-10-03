@@ -41,6 +41,8 @@ Gmail, iCloud, Outlook and Fastmail all complete the handshake.
   junk act on the whole conversation. The list is newest first by date. A blue dot marks an unread message, a
   yellow flag a flagged one, and `@` one with attachments.
 - **Search:** the search field narrows the list by sender and subject.
+- **Composer:** Save Draft files the message in the account's Drafts folder, marked
+  as a draft; Send hands it to the account's SMTP server and files a copy in Sent.
 - **Reader:** shows the plain-text body, or HTML mail as readable text. Each
   attachment has a button that saves it.
 - **Status line:** at the bottom of the window, it reports syncing, sending and
@@ -97,7 +99,7 @@ Then run `luced-message --home DIR`.
 - OAuth2 sign-in for Gmail and Outlook. The protocol side, XOAUTH2, is ready.
 - Conversation threading.
 - Server-side search.
-- Drafts saved to the server.
+
 - Multiple selection.
 - HTML rendering through luce-browser-engine.
 - TLS 1.2-only servers.

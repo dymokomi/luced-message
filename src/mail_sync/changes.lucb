@@ -82,11 +82,38 @@ extend Engine:
     ## The folder sent mail is filed in: the one marked \\Sent, else one named as
     ## servers without special-use name it.
     func sent_folder() -> str?:
+        return self.role_folder(imap.MailboxFlags.sent, ["Sent", "Sent Items", "Sent Messages", "Sent Mail", "INBOX.Sent"])
+
+    ## The folder drafts are kept in: the one marked \\Drafts, else one named Drafts.
+    func drafts_folder() -> str?:
+        return self.role_folder(imap.MailboxFlags.drafts, ["Drafts", "INBOX.Drafts", "Draft"])
+
+    ## The folder with special-use `flag`, else the first named one of `names`.
+    func role_folder(flag: imap.MailboxFlags, names: const str[]) -> str?:
         for folder in self.folders.view():
-            if (folder.flags & (u32)imap.MailboxFlags.sent) != 0:
+            if (folder.flags & (u32)flag) != 0:
                 return folder.path
-        for name in ["Sent", "Sent Items", "Sent Messages", "Sent Mail", "INBOX.Sent"]:
+        for name in names:
             for folder in self.folders.view():
                 if imap.same(folder.path.bytes, name.bytes):
                     return folder.path
         return none
+
+    ## File the message in `file` in the Drafts folder, marked as a draft.
+    mutating func save_draft(file: const u8[]):
+        self.file_draft(file) catch failure:
+            self.post("unsaved", file, failure.message.bytes)
+            recover ()
+
+    mutating func file_draft(file: const u8[]) -> !:
+        var path: Buffer
+        defer path.close()
+        try path.put(file)
+        let data = try files.read(try path.terminated())
+        defer free(data)
+        if self.folders.length() == 0:
+            try self.list_folders()
+        let drafts = self.drafts_folder() else error(imap.unsupported, "this account has no Drafts folder")
+        discard(try self.session.append(drafts, data, imap.Flags.seen | imap.Flags.draft))
+        self.post("saved", file)
+        self.wants_full_sync = true
