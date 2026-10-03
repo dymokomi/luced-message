@@ -276,11 +276,14 @@ pub class Panels:
             source.refresh()
         self.tell("Checking for mail…")
 
+    ## A new message from the account shown, or the first one when no folder is
+    ## picked yet (an account still offline has none).
     func compose(self) -> unit!:
-        if let source = self.current():
-            self.composer.compose(source)
-        else:
+        if self.sources.length == 0:
             self.tell("Add an account first: Mailbox › Accounts…")
+            return
+        self.tell("")
+        self.composer.compose(self.current() else self.sources[0])
 
     func reply(self, all: bool) -> unit!:
         let source = self.current() else return
