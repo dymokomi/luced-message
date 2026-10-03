@@ -3,8 +3,8 @@
 from accounts import Account, AccountStore, account_id, escape
 import mail_index
 import clock
-import files
-import paths
+import luce_std.files
+import luce_std.paths
 import sources_tests
 import composer_tests
 import list_tests

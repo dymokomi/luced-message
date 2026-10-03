@@ -8,7 +8,7 @@
 ## Files are written whole and atomically: a reader never sees half of one. Lines are
 ## tab-separated fields (engine_text's escaping); the first line names the format.
 import c
-import files
+import luce_std.files
 import memory
 from engine_text import Buffer, Pool, Records, Fields, equal
 

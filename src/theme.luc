@@ -1,8 +1,8 @@
 ## luced-message's palette: luced-2d's greys and #E7A03F orange in the same linear-light
 ## color space, kept local so the shared UI package stays neutral.
-from ui import Theme
-from gpu import Color
-import transfer
+from luce_ui.ui import Theme
+from luce_gpu.gpu import Color
+import luce_color.transfer
 
 ## A grey from an sRGB byte value.
 pub func grey(byte: float) -> Color:

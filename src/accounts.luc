@@ -14,10 +14,10 @@
 ## service `com.luciaos.luced-message` and the account's id. Only a local test account
 ## may name its password in the file (`password = "…"`), so freshly built test
 ## binaries need no keychain permission; the Accounts dialog never writes one.
-from toml import Table
-import files
-import keychain
-import paths
+from luce_config.toml import Table
+import luce_std.files
+import luce_keychain.keychain
+import luce_std.paths
 
 ## The application's directory: settings, accounts and the message store.
 pub func home() -> str!:

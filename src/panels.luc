@@ -3,7 +3,7 @@
 ## panels hold the sources and carry what happens between them: picking a folder fills
 ## the list, picking a message fills the reader (asking its source for the body when
 ## it is not stored yet), and each source's events refresh what they touch.
-from ui import VStack, HStack, Text, TextField, Font, Button, Spacer, DStack, Panel, DockPosition, Size, Application, Menu, CommandPalette, Command
+from luce_ui.ui import VStack, HStack, Text, TextField, Font, Button, Spacer, DStack, Panel, DockPosition, Size, Application, Menu, CommandPalette, Command
 from interop import Connection
 from actions import Actions
 from accounts import Account, AccountStore, home
@@ -13,7 +13,7 @@ from message_list import MessageList
 from reader import Reader
 from composer import Composer
 from account_dialog import AccountDialog
-import paths
+import luce_std.paths
 import mail_index
 
 pub class Panels:

@@ -18,15 +18,15 @@
 ## commands, paths, selecting, waiting), folders (listing and syncing folders, bodies),
 ## changes (flags, moves, sending).
 import c
-import files
-import imap
+import luce_std.files
+import luce_imap.imap
 import memory
-import mime
-import net
-import smtp
+import luce_mime.mime
+import luce_std.net
+import luce_smtp.smtp
 import thread
 import time
-import tls_stream
+import luce_tls.stream as tls_stream
 from engine_text import Buffer, Pool, Records, Fields, equal
 from mail_store import Index, Row, Folder, save_folders, put_key, ensure_path
 from mail_queue import Mailroom

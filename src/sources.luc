@@ -8,7 +8,7 @@ import mail_service
 from mail_service import MailService
 import mail_index
 from mail_index import MessageIndex
-import paths
+import luce_std.paths
 
 ## Message flag bits, as the store keeps them (imap.Flags).
 pub let seen_flag: int = 1

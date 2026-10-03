@@ -3,14 +3,14 @@
 ## Mail does: Re:/Fwd: subjects, the original quoted under an attribution line, and a
 ## reply threaded by In-Reply-To and References. Sending writes the message (built
 ## by luce-mime's Draft) into the outbox and hands it to the source's engine.
-from ui import Dialog, HStack, Text, TextField, TextEditor, Button, Spacer, Font, Size, Application
+from luce_ui.ui import Dialog, HStack, Text, TextField, TextEditor, Button, Spacer, Font, Size, Application
 from interop import Connection
 from reader import Shown
 from sources import Source
-import mime
+import luce_mime.mime
 import clock
-import files
-import paths
+import luce_std.files
+import luce_std.paths
 import time
 
 pub class Composer:

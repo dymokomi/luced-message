@@ -1,8 +1,8 @@
 ## One Command per action, as in luced-2d: the toolbar's square buttons, the menus,
 ## the command palette and the keyboard all present the same command, so disabling an
 ## action (Reply with no message selected) disables it everywhere.
-from ui import Command, Shortcut
-from input import Key
+from luce_ui.ui import Command, Shortcut
+from luce_window.input import Key
 
 pub class Actions:
     # Mailbox

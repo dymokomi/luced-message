@@ -1,7 +1,7 @@
 ## The mailbox sidebar: each source's title, then its folders as a tree (indented by
 ## depth), Inbox first, each with its unread count. Picking a folder shows its
 ## messages; picking a source's title shows its Inbox.
-from ui import ListView, ListItem, IconKind, Font
+from luce_ui.ui import ListView, ListItem, IconKind, Font
 from sources import Source
 
 ## One row of the sidebar.

@@ -2,7 +2,7 @@
 ## each loaded whole into an object Luce holds, with one accessor per column. Reading
 ## them in Base keeps a 50,000-message folder quick to open.
 import c
-import files
+import luce_std.files
 import interop
 import memory
 from engine_text import Buffer, Pool, Records, Fields, equal

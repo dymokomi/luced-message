@@ -1,7 +1,7 @@
 ## The Accounts dialog: add an email account (name, address, password, the IMAP and
 ## SMTP servers with their ports and security), change the one shown, or remove it.
 ## Saving writes accounts.toml and restarts the account's source.
-from ui import Dialog, VStack, HStack, Text, TextField, Button, Spacer, Font, Size, ListView, ListItem, Widget
+from luce_ui.ui import Dialog, VStack, HStack, Text, TextField, Button, Spacer, Font, Size, ListView, ListItem, Widget
 from interop import Connection
 from accounts import Account, account_id
 

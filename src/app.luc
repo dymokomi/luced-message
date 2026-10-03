@@ -1,12 +1,12 @@
 ## luced-message's application: the window, its panels and their sources, and the
 ## timer that takes in what the sources' engines report.
-from ui import Application, Font
+from luce_ui.ui import Application, Font
 from panels import Panels
 import theme
-import crash
+import luce_std.crash
 
 ## The version crash reports carry; keep it equal to package.prisma's.
-pub let version: str = "0.1.2"
+pub let version: str = "0.2.0"
 
 pub class LuceMessage:
     pub let app: Application

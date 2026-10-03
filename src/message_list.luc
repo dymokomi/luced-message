@@ -5,7 +5,7 @@
 ## a dot or flag when any message has one. Unread rows are bold. Typing narrows the rows
 ## to those whose sender or subject holds the text; a server search (Enter) narrows them
 ## to the messages whose text holds it.
-from ui import TableView, TableColumn, TableCell, CellAlign, Font
+from luce_ui.ui import TableView, TableColumn, TableCell, CellAlign, Font
 from mail_index import MessageIndex
 import clock
 import mail_index

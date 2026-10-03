@@ -2,9 +2,9 @@
 ## text in a read-only, wrapped editor, and its attachments, each with a Save button.
 ## A message whose body is not in the store yet shows "Loading…" until the source
 ## says it has arrived.
-from ui import VStack, HStack, Text, TextEditor, Rule, Spacer, Button, Font, Application, Widget
+from luce_ui.ui import VStack, HStack, Text, TextEditor, Rule, Spacer, Button, Font, Application, Widget
 from interop import Connection
-import mime
+import luce_mime.mime
 import clock
 
 ## What the reader shows, for replying and forwarding.
