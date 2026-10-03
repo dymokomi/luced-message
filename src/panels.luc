@@ -66,6 +66,7 @@ pub class Panels:
                               self.tool(font, "junk", self.actions.junk), self.gap(), self.tool(font, "flag", self.actions.flag),
                               self.tool(font, "mail-unread", self.actions.mark_unread), Spacer(),
                               Menu("Mailbox", [self.actions.get_mail, self.actions.compose, self.actions.accounts], font = font),
+                              Menu("View", [self.actions.organize], font = font),
                               Menu("Window", [self.actions.palette, self.actions.reset_layout], font = font),
                               self.search], spacing = 4.0, padding = 4.0)
         let mailboxes = Panel("Mailboxes", self.sidebar.view, minimum = Size(180.0, 200.0), closable = false, id = "mailboxes")
@@ -113,6 +114,9 @@ pub class Panels:
         self.connections.append(actions.mark_unread.on_trigger(self.mark_unread))
         self.connections.append(actions.accounts.on_trigger(func () -> unit!:
             self.account_dialog.open(self.accounts)))
+        self.connections.append(actions.organize.on_trigger(func () -> unit!:
+            self.messages.set_threaded(not self.messages.threaded)
+            actions.organize.set_text("Organize by Conversation ✓" if self.messages.threaded else "Organize by Conversation")))
         self.connections.append(actions.palette.on_trigger(func () -> unit!:
             self.palette.open()))
         self.connections.append(actions.quit.on_trigger(func () -> unit!:
@@ -174,8 +178,10 @@ pub class Panels:
                     self.messages.show(source.messages(self.folder))
             "body":
                 if let shown = self.reader.shown:
-                    if shown.source == position and shown.folder == event.folder and shown.uid == event.uid and shown.file == "":
-                        self.show_message(event.uid)
+                    if shown.source == position and shown.folder == event.folder:
+                        # The message on its way, or an earlier one of its conversation.
+                        if (shown.uid == event.uid and shown.file == "") or (shown.waiting > 0 and event.uid in shown.members):
+                            self.show_message(shown.uid)
             "status":
                 self.tell(f"{source.title()}: {event.text}" if event.text != "" else "")
             "online":
@@ -202,6 +208,7 @@ pub class Panels:
         self.reader.clear()
         self.messages.show(shown.messages(folder))
 
+    ## Show the picked message, or its whole conversation, fetching what is not stored.
     func show_message(self, uid: int) -> unit!:
         self.actions.refresh(uid >= 0)
         let source = self.current() else return
@@ -213,9 +220,18 @@ pub class Panels:
             self.reader.loading(self.source, self.folder, uid)
             source.fetch(self.folder, uid)
             return
-        self.reader.show(self.source, self.folder, uid, file)
-        if not mail_index.has(self.messages.picked_flags(), seen_flag):
-            source.set_flags(self.folder, [uid], true, seen_flag)
+        let members = self.messages.picked_uids()
+        var earlier: list[str] = []
+        for member in members:
+            if member == uid:
+                continue
+            let other = source.message_file(self.folder, member)
+            if other == "":
+                source.fetch(self.folder, member)
+            earlier.append(other)
+        self.reader.show(self.source, self.folder, uid, file, members, earlier)
+        if self.messages.picked_unread():
+            source.set_flags(self.folder, members, true, seen_flag)
 
     # mark: actions ==============================================================================
 
@@ -247,30 +263,34 @@ pub class Panels:
     ## Move the picked message to Trash, or mark it deleted when there is no Trash.
     func delete(self) -> unit!:
         let source = self.current() else return
-        let uid = self.messages.picked_uid()
-        if uid < 0:
+        let uids = self.messages.picked_uids()
+        if uids.length == 0:
             return
         self.messages.pick_next()
-        if not source.move_to(self.folder, [uid], "trash"):
-            source.set_flags(self.folder, [uid], true, deleted_flag)
+        if not source.move_to(self.folder, uids, "trash"):
+            source.set_flags(self.folder, uids, true, deleted_flag)
 
     ## Move the picked message to the folder with `role` (archive, junk).
     func file_to(self, role: str) -> unit!:
         let source = self.current() else return
-        let uid = self.messages.picked_uid()
-        if uid < 0:
+        let uids = self.messages.picked_uids()
+        if uids.length == 0:
             return
         self.messages.pick_next()
-        if not source.move_to(self.folder, [uid], role):
+        if not source.move_to(self.folder, uids, role):
             self.tell(f"This account has no {role} folder.")
 
+    ## Flag the picked message (a conversation's newest), or clear the flag from every
+    ## message of the pick when it has one.
     func toggle_flag(self) -> unit!:
         let source = self.current() else return
         let uid = self.messages.picked_uid()
         if uid < 0:
             return
-        let flagged = mail_index.has(self.messages.picked_flags(), flagged_flag)
-        source.set_flags(self.folder, [uid], not flagged, flagged_flag)
+        if mail_index.has(self.messages.picked_flags(), flagged_flag):
+            source.set_flags(self.folder, self.messages.picked_uids(), false, flagged_flag)
+        else:
+            source.set_flags(self.folder, [uid], true, flagged_flag)
 
     func mark_unread(self) -> unit!:
         let source = self.current() else return

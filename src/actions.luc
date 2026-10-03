@@ -17,6 +17,8 @@ pub class Actions:
     pub let junk: Command
     pub let flag: Command
     pub let mark_unread: Command
+    ## View › Organize by Conversation: rows are whole threads (ticked) or messages.
+    pub let organize: Command
     # Composer
     pub let send: Command
     # Application
@@ -39,13 +41,14 @@ pub class Actions:
         self.junk = Command("Move to Junk", Shortcut(Key.j, primary = true, shift = true), id = "junk")
         self.flag = Command("Flag", Shortcut(Key.l, primary = true, shift = true), id = "flag")
         self.mark_unread = Command("Mark as Unread", Shortcut(Key.u, primary = true, shift = true), id = "mark_unread")
+        self.organize = Command("Organize by Conversation ✓", Shortcut(Key.o, primary = true, alt = true), id = "organize")
         self.send = Command("Send", Shortcut(Key.d, primary = true, shift = true), id = "send")
         self.accounts = Command("Accounts…", Shortcut(Key.comma, primary = true), id = "accounts")
         self.palette = Command("Command Palette…", Shortcut(Key.p, primary = true, shift = true), id = "palette")
         self.reset_layout = Command("Reset Layout", id = "reset_layout")
         self.quit = Command("Quit", Shortcut(Key.q, primary = true), id = "quit")
         self.all = [self.get_mail, self.compose, self.reply, self.reply_all, self.forward, self.delete, self.delete_back,
-                    self.archive, self.junk, self.flag, self.mark_unread, self.send, self.accounts, self.palette,
+                    self.archive, self.junk, self.flag, self.mark_unread, self.organize, self.send, self.accounts, self.palette,
                     self.reset_layout, self.quit]
 
     ## Enable the actions on a message when one is selected.

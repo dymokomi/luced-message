@@ -23,6 +23,10 @@ pub class Shown:
     pub var references: str = ""
     pub var body: str = ""
     pub var file: str = ""
+    ## Every message of the conversation shown, newest first (this one included).
+    pub var members: list[int] = []
+    ## Earlier messages of the conversation still being fetched.
+    pub var waiting: int = 0
 
     pub func init(self, source: int, folder: str, uid: int):
         self.source = source
@@ -72,8 +76,10 @@ pub class Reader:
         self.shown = Shown(source, folder, uid)
         self.text.set_text("Loading…")
 
-    ## Show the message in `file`.
-    pub func show(self, source: int, folder: str, uid: int, file: str) -> unit!:
+    ## Show the message in `file`. In a conversation, `earlier` holds the files of its
+    ## other messages, newest first ("" for one still being fetched); they follow the
+    ## newest, each under a rule with its sender and date, as Mail stacks them.
+    pub func show(self, source: int, folder: str, uid: int, file: str, members: list[int] = [], earlier: list[str] = []) -> unit!:
         let message = mime.open(file)
         let shown = Shown(source, folder, uid)
         shown.file = file
@@ -95,8 +101,18 @@ pub class Reader:
         self.date_line.set_text(f"Date     {clock.long_date(shown.date)}")
         self.date_line.layout().set_visible(shown.date != 0)
         let subject = shown.subject if shown.subject != "" else "(no subject)"
-        self.subject_line.set_text(f"Subject  {subject}")
-        self.text.set_text(shown.body)
+        self.subject_line.set_text(f"Subject  {subject}  ({members.length} messages)" if members.length > 1 else f"Subject  {subject}")
+        shown.members = members
+        var text = shown.body
+        for other in earlier:
+            if other == "":
+                shown.waiting += 1
+                text = text + "\n\n──────── an earlier message is loading…"
+                continue
+            let previous = mime.open(other)
+            let date = clock.long_date(previous.date_seconds())
+            text = text + f"\n\n──────── {previous.address_line("From", short = true)} · {date}\n\n" + previous.body_text(prefer_html = true)
+        self.text.set_text(text)
         var buttons: list[Widget] = []
         for nth in 0..<message.attachment_count():
             let part = message.attachment(nth)

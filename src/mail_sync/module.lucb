@@ -1,0 +1,73 @@
+## The mail engine for one email account, on its own thread. It keeps one IMAP
+## session: it lists the folders, brings each folder's index up to date (new messages'
+## headers, everyone's flags, expunges), prefetches the newest INBOX bodies, then
+## waits in IDLE on INBOX until the server has news or the window has a command.
+## Commands (fetch a body, change flags, move, send) run between those steps. Every
+## change is written to the store first and then announced as an event, so the window
+## only ever reads files.
+##
+## Commands, tab-separated:   sync | body PATH UID | flags PATH UIDS ADD BITS |
+##                            move PATH UIDS TARGET | send FILE FROM RECIPIENTS
+## Events:                    online | offline TEXT | status TEXT | folders |
+##                            folder PATH | body PATH UID | sent FILE | unsent FILE TEXT |
+##                            error TEXT
+##
+## Fragments, in ORDER: module (imports, limits, the account), engine (the loop,
+## commands, paths, selecting, waiting), folders (listing and syncing folders, bodies),
+## changes (flags, moves, sending).
+import c
+import files
+import imap
+import memory
+import mime
+import net
+import smtp
+import thread
+import time
+import tls_stream
+from engine_text import Buffer, Pool, Records, Fields, equal
+from mail_store import Index, Row, Folder, save_folders, put_key, ensure_path
+from mail_queue import Mailroom
+
+## The headers a message list needs, fetched for every new message.
+let summary_fields: str = "DATE FROM SUBJECT MESSAGE-ID IN-REPLY-TO CONTENT-TYPE"
+## How many messages' headers one FETCH asks for.
+let batch_size: usize = 400
+## How many of INBOX's newest bodies are fetched ahead of being opened.
+let prefetch_count: usize = 25
+## A full sync of every folder at least this often, in nanoseconds.
+let full_sync_interval: u64 = 10 * 60 * 1000000000
+## One slice of an IDLE wait, between looks at the mailroom.
+let idle_slice: u64 = 500000000
+## How long to wait before reconnecting after a failure.
+let retry_delay: u64 = 30 * 1000000000
+
+## The account the engine serves, read from its configuration line.
+struct Account:
+    var id: str
+    var root: str
+    var imap_host: str
+    var imap_port: u16
+    var imap_security: imap.Security
+    var user: str
+    var password: str
+    var smtp_host: str
+    var smtp_port: u16
+    var smtp_security: smtp.Security
+    var smtp_user: str
+    var smtp_password: str
+
+## The security named `name`: plain, starttls or tls.
+func imap_security(name: const u8[]) -> imap.Security:
+    if equal(name, b"plain"):
+        return imap.Security.plain
+    if equal(name, b"starttls"):
+        return imap.Security.starttls
+    return imap.Security.tls
+
+func smtp_security(name: const u8[]) -> smtp.Security:
+    if equal(name, b"plain"):
+        return smtp.Security.plain
+    if equal(name, b"tls"):
+        return smtp.Security.tls
+    return smtp.Security.starttls

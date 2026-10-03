@@ -34,7 +34,10 @@ Gmail, iCloud, Outlook and Fastmail all complete the handshake.
 | Flag / Mark as Unread | Cmd/Ctrl-Shift-L / Cmd/Ctrl-Shift-U | flag, mail-unread |
 | Command Palette | Cmd/Ctrl-Shift-P | |
 
-- **Message list:** newest first by date. A blue dot marks an unread message, a
+- **Message list:** organized by conversation, as Mail is. A row is a whole thread,
+  with its message count beside the date, and the reader stacks the thread newest first.
+  View › Organize by Conversation (Cmd/Ctrl-Alt-O) turns this off. Delete, archive and
+  junk act on the whole conversation. The list is newest first by date. A blue dot marks an unread message, a
   yellow flag a flagged one, and `@` one with attachments.
 - **Search:** the search field narrows the list by sender and subject.
 - **Reader:** shows the plain-text body, or HTML mail as readable text. Each

@@ -7,12 +7,15 @@ import interop
 import memory
 from engine_text import Buffer, Pool, Records, Fields, equal
 from mail_store import Index, Row, Folder
+from mail_threads import Threads, thread
 
 ## A folder's messages, as the store has them, sorted by UID.
 pub struct MessageIndex:
     var index: Index
     ## Positions newest first: by date, then by UID.
     var order: Records[u32]
+    ## The messages grouped into conversations.
+    var threads: Threads
 
     ## How many messages there are.
     pub func count() -> i64:
@@ -101,9 +104,50 @@ pub struct MessageIndex:
             return first.date > second.date
         return first.uid > second.uid
 
+    # mark: conversations ======================================================================
+
+    ## How many conversations there are.
+    pub func thread_count() -> i64:
+        return (i64)self.threads.count()
+
+    func checked_thread(nth: i64) -> usize:
+        if nth < 0 or nth >= (i64)self.threads.count():
+            trap("no conversation at that place")
+        return (usize)nth
+
+    ## How many messages conversation `nth` (newest first) holds.
+    pub func thread_size(nth: i64) -> i64:
+        return (i64)self.threads.size(self.checked_thread(nth))
+
+    ## The position of the `member`-th newest message of conversation `nth`.
+    pub func thread_member(nth: i64, member: i64) -> i64:
+        let group = self.checked_thread(nth)
+        if member < 0 or member >= (i64)self.threads.size(group):
+            trap("no message at that place in the conversation")
+        return (i64)self.threads.member(group, (usize)member)
+
+    ## Whether any message of conversation `nth` has all of flag bits `bit`
+    ## (`seen` asks for the inverse: whether any is unread).
+    pub func thread_any(nth: i64, bit: i64, wanted: bool) -> bool:
+        let group = self.checked_thread(nth)
+        for member in 0..<self.threads.size(group):
+            let flags = (i64)self.index.rows.at((usize)self.threads.member(group, member)).flags
+            if ((flags & bit) == bit) == wanted:
+                return true
+        return false
+
+    ## Whether any message of conversation `nth` has attachments.
+    pub func thread_attachment(nth: i64) -> bool:
+        let group = self.checked_thread(nth)
+        for member in 0..<self.threads.size(group):
+            if self.index.rows.at((usize)self.threads.member(group, member)).attachment:
+                return true
+        return false
+
     pub mutating func close():
         self.index.close()
         self.order.close()
+        self.threads.close()
 
 pub let message_index_type: interop.Type[MessageIndex] = interop.Type[MessageIndex]("Message index", MessageIndex.close, closeable = true)
 
@@ -115,6 +159,7 @@ pub func read_index(path: str) -> interop.Reference[MessageIndex]!:
     let native = try new MessageIndex(index = try Index.load(try name.terminated())) in memory.heap
     errdefer free(native) in memory.heap
     try native.sort()
+    native.threads = try thread(&native.index)
     return try interop.Reference[MessageIndex].adopt(native, message_index_type)
 
 ## The folders of one account, as the engine listed them.

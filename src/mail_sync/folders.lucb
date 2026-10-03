@@ -1,0 +1,239 @@
+#==============================================================================================
+#
+#   mail_sync/folders - Listing and syncing folders, fetching bodies
+#
+#==============================================================================================
+
+extend Engine:
+    # mark: syncing ==============================================================================
+
+    ## List the folders and bring every one up to date.
+    mutating func sync_all() -> !:
+        self.wants_full_sync = false
+        self.last_full_sync = time.now()
+        self.post("status", b"Checking for mail")
+        try self.list_folders()
+        for at in 0..<self.folders.length():
+            if self.room.stopped():
+                return
+            try self.sync_folder(at)
+            # A command the window is waiting on goes before the remaining folders.
+            var command: Buffer
+            defer command.close()
+            while try self.room.take(&command):
+                try self.handle(command.view())
+        try self.save_folders()
+        self.post("folders")
+        self.post("status", b"")
+
+    ## Learn the folders, INBOX first, and write the folders file.
+    mutating func list_folders() -> !:
+        let mailboxes = try self.session.list()
+        self.folders.clear()
+        self.folder_text.close()
+        var key: Buffer
+        defer key.close()
+        # INBOX first: it is what the user looks at.
+        for pass in 0..<2:
+            for mailbox in mailboxes:
+                let inbox = imap.same(mailbox.path, b"INBOX")
+                if (pass == 0) != inbox or mailbox.is(imap.MailboxFlags.no_select):
+                    continue
+                key.clear()
+                try put_key(mailbox.path, &key)
+                try self.folders.add(Folder(path = try self.folder_text.keep_text(mailbox.path), name = try self.folder_text.keep_text(mailbox.name.bytes),
+                                            delimiter = mailbox.delimiter, flags = (u32)mailbox.flags, key = try self.folder_text.keep_text(key.view())))
+        try self.save_folders()
+        self.post("folders")
+
+    ## Write the folders file.
+    mutating func save_folders() -> !:
+        var path: Buffer
+        defer path.close()
+        try self.account_directory(&path)
+        try ensure_path(path.text_view())
+        try path.put(b"/folders")
+        try save_folders(try path.terminated(), self.folders.view())
+
+    ## Bring folder number `at` up to date.
+    mutating func sync_folder(at: usize) -> !:
+        let folder = self.folders.at(at)
+        let path = folder.path.bytes
+        var directory: Buffer
+        defer directory.close()
+        try self.folder_directory(path, &directory)
+        try ensure_path(directory.text_view())
+        var index_path: Buffer
+        defer index_path.close()
+        try self.folder_file(path, b"index", &index_path)
+        var index = try Index.load(try index_path.terminated())
+        defer index.close()
+        let state = try self.select(path)
+        if index.uid_validity != state.uid_validity:
+            index.clear()
+            index.uid_validity = state.uid_validity
+        # Flags of the messages held, and which are gone.
+        if index.rows.length() > 0 and state.exists > 0:
+            try self.refresh_flags(&index)
+        elif state.exists == 0 and index.rows.length() > 0:
+            index.clear()
+            index.uid_validity = state.uid_validity
+        # New messages: their headers, newest batches first.
+        if state.exists > 0 and (state.uid_next == 0 or state.uid_next > index.last_uid() + 1):
+            try self.fetch_new(path, &index, &index_path)
+        index.uid_next = state.uid_next
+        if index.changed:
+            try index.save(try index_path.terminated())
+            self.post("folder", path)
+        var updated = folder
+        updated.total = (u32)index.rows.length()
+        updated.unseen = index.unseen()
+        self.folders.set(at, updated)
+        if imap.same(path, b"INBOX"):
+            try self.prefetch(path, &index, &index_path)
+
+    ## Update every held row's flags and drop the rows the server no longer has.
+    mutating func refresh_flags(index: Index*) -> !:
+        var set: Buffer
+        defer set.close()
+        try set.put(b"1:")
+        try set.number((i64)index.last_uid())
+        let records = try self.session.fetch(set.text_view(), "(UID FLAGS)")
+        var seen: Records[bool]
+        defer seen.close()
+        while seen.length() < index.rows.length():
+            try seen.add(false)
+        for record in records:
+            if let at = index.find(record.uid):
+                seen.set(at, true)
+                var row = index.rows.at(at)
+                if record.has_flags and row.flags != (u16)record.flags:
+                    row.flags = (u16)record.flags
+                    index.rows.set(at, row)
+                    index.changed = true
+        var at = index.rows.length()
+        while at > 0:
+            at -= 1
+            if not seen.at(at):
+                index.rows.remove(at)
+                index.changed = true
+
+    ## Fetch the headers of messages newer than the index holds.
+    mutating func fetch_new(path: const u8[], index: Index*, index_path: Buffer*) -> !:
+        var criteria: Buffer
+        defer criteria.close()
+        try criteria.put(b"UID ")
+        try criteria.number((i64)index.last_uid() + 1)
+        try criteria.put(b":*")
+        let found = try self.session.search(criteria.text_view())
+        var uids: Records[u32]
+        defer uids.close()
+        for uid in found:
+            if uid > index.last_uid():
+                try uids.add(uid)
+        var end = uids.length()
+        while end > 0:
+            let start = end - batch_size if end > batch_size else 0
+            var set: imap.Bytes
+            defer set.close()
+            try imap.write_set(uids.view()[start..<end], &set)
+            let records = try self.session.fetch_headers((str)set.view(), summary_fields)
+            for record in records:
+                try index.put(try summarize(&record, index))
+            try index.save(try index_path.terminated())
+            self.post("folder", path)
+            end = start
+            if self.room.has_command() or self.room.stopped():
+                # The rest arrives on the next sync; the window's command goes first.
+                self.wants_full_sync = true
+                return
+
+    ## Fetch INBOX's newest bodies that are not in the store yet.
+    mutating func prefetch(path: const u8[], index: Index*, index_path: Buffer*) -> !:
+        var fetched: usize = 0
+        var at = index.rows.length()
+        var file: Buffer
+        defer file.close()
+        while at > 0 and fetched < prefetch_count:
+            at -= 1
+            if self.room.has_command() or self.room.stopped():
+                break
+            let uid = index.rows.at(at).uid
+            try self.message_file(path, uid, &file)
+            if files.exists(try file.terminated()):
+                continue
+            try self.store_body(path, uid, index, &file)
+            fetched += 1
+        if index.changed:
+            try index.save(try index_path.terminated())
+            self.post("folder", path)
+
+    ## Fetch message `uid` of the selected folder `path` into `file`, and fill its row's
+    ## preview from it.
+    mutating func store_body(path: const u8[], uid: u32, index: Index*, file: Buffer*) -> !:
+        let data = try self.session.fetch_message(uid)
+        if data.length == 0:
+            return
+        try files.write_atomic(try file.terminated(), data)
+        if let at = index.find(uid):
+            var message = try mime.Message.read(data)
+            defer message.close()
+            var row = index.rows.at(at)
+            row.preview = try index.keep(try message.preview().bytes)
+            row.attachment = try message.attachment_count() > 0
+            index.rows.set(at, row)
+            index.changed = true
+
+    ## Fetch message `uid` of folder `path` for the window, which waits for it.
+    mutating func fetch_body(path: const u8[], uid: u32) -> !:
+        var file: Buffer
+        defer file.close()
+        try self.message_file(path, uid, &file)
+        if not files.exists(try file.terminated()):
+            discard(try self.select(path))
+            var index_path: Buffer
+            defer index_path.close()
+            try self.folder_file(path, b"index", &index_path)
+            var index = try Index.load(try index_path.terminated())
+            defer index.close()
+            try self.store_body(path, uid, &index, &file)
+            if index.changed:
+                try index.save(try index_path.terminated())
+                self.post("folder", path)
+        var number: Buffer
+        defer number.close()
+        try number.number((i64)uid)
+        self.post("body", path, number.view())
+
+## The row a message list needs from a fetched header.
+func summarize(record: const imap.Fetched*, index: Index*) -> Row!:
+    var message = try mime.Message.read(record.header)
+    defer message.close()
+    let sender = try message.address_line("From", short = true)
+    let date = message.date_seconds()
+    return Row(uid = record.uid, flags = (u16)record.flags, date = date if date != 0 else record.internal_date,
+               size = (u32)record.size, attachment = try message.part_type(0) == "multipart/mixed",
+               sender = try index.keep(sender.bytes), subject = try index.keep((try message.subject()).bytes),
+               message_id = try index.keep((try message.message_id()).bytes),
+               in_reply_to = try index.keep((try message.in_reply_to()).bytes), preview = "")
+
+## The UIDs of sequence set `text` (`4:7,9`) onto `out`.
+func read_set(text: const u8[], out: Records[u32]*) -> !:
+    var index: usize = 0
+    while index < text.length:
+        var first: u32 = 0
+        while index < text.length and text[index] >= '0' and text[index] <= '9':
+            first = first * 10 + (u32)(text[index] - '0')
+            index += 1
+        var last = first
+        if index < text.length and text[index] == ':':
+            index += 1
+            last = 0
+            while index < text.length and text[index] >= '0' and text[index] <= '9':
+                last = last * 10 + (u32)(text[index] - '0')
+                index += 1
+        var value = first
+        while value <= last and value - first < 100000:
+            try out.add(value)
+            value += 1
+        index += 1

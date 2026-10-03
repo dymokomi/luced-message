@@ -1,0 +1,92 @@
+#==============================================================================================
+#
+#   mail_sync/changes - Flags, moves and sending
+#
+#==============================================================================================
+
+extend Engine:
+    # mark: changes ==============================================================================
+
+    ## Add (`add`) or remove flag bits `bits` on messages `uids` of folder `path`.
+    mutating func set_flags(path: const u8[], uids: const u8[], add: bool, bits: u16) -> !:
+        discard(try self.select(path))
+        try self.session.store((str)uids, (imap.Flags)bits, add)
+        try self.update_index(path, uids, bits, add, false)
+
+    ## Move messages `uids` of folder `path` to folder `target`.
+    mutating func move(path: const u8[], uids: const u8[], target: const u8[]) -> !:
+        discard(try self.select(path))
+        try self.session.move((str)uids, (str)target)
+        try self.update_index(path, uids, 0, false, true)
+        self.wants_full_sync = true
+
+    ## Apply a flag change or a removal to folder `path`'s index and announce it.
+    mutating func update_index(path: const u8[], uids: const u8[], bits: u16, add: bool, remove: bool) -> !:
+        var index_path: Buffer
+        defer index_path.close()
+        try self.folder_file(path, b"index", &index_path)
+        var index = try Index.load(try index_path.terminated())
+        defer index.close()
+        var numbers: Records[u32]
+        defer numbers.close()
+        try read_set(uids, &numbers)
+        for uid in numbers.view():
+            if remove:
+                index.remove(uid)
+            elif let at = index.find(uid):
+                var row = index.rows.at(at)
+                row.flags = (row.flags | bits) if add else (row.flags & ~bits)
+                index.rows.set(at, row)
+                index.changed = true
+        if index.changed:
+            try index.save(try index_path.terminated())
+            self.post("folder", path)
+
+    ## Send the message in `file` from `sender` to the comma-separated `recipients`.
+    mutating func send(file: const u8[], sender: const u8[], recipients: const u8[]):
+        self.send_message(file, sender, recipients) catch failure:
+            self.post("unsent", file, failure.message.bytes)
+            recover ()
+
+    mutating func send_message(file: const u8[], sender: const u8[], recipients: const u8[]) -> !:
+        self.post("status", b"Sending")
+        var path: Buffer
+        defer path.close()
+        try path.put(file)
+        let data = try files.read(try path.terminated())
+        defer free(data)
+        var list: Records[str]
+        defer list.close()
+        var start: usize = 0
+        for at in 0..<recipients.length + 1:
+            if at == recipients.length or recipients[at] == ',':
+                if at > start:
+                    try list.add(try self.text.keep_text(recipients[start..<at]))
+                start = at + 1
+        var client = try smtp.Client.open(self.account.smtp_host, self.account.smtp_port, self.account.smtp_security, cancellation = &self.room.quit)
+        defer client.close()
+        if self.account.smtp_user.length > 0:
+            try client.login(self.account.smtp_user, self.account.smtp_password)
+        discard(try client.send((str)sender, list.view(), data))
+        client.quit()
+        # A copy in the Sent folder, unless the server files one itself (it does not
+        # say; Gmail does, most do not).
+        if self.folders.length() == 0:
+            try self.list_folders()
+        if let sent = self.sent_folder():
+            discard(self.session.append(sent, data, imap.Flags.seen) catch failure:
+                recover 0)
+        self.post("sent", file)
+        self.post("status", b"")
+
+    ## The folder sent mail is filed in: the one marked \\Sent, else one named as
+    ## servers without special-use name it.
+    func sent_folder() -> str?:
+        for folder in self.folders.view():
+            if (folder.flags & (u32)imap.MailboxFlags.sent) != 0:
+                return folder.path
+        for name in ["Sent", "Sent Items", "Sent Messages", "Sent Mail", "INBOX.Sent"]:
+            for folder in self.folders.view():
+                if imap.same(folder.path.bytes, name.bytes):
+                    return folder.path
+        return none

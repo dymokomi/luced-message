@@ -1,0 +1,256 @@
+## Conversations: a folder's messages grouped the way Mail groups them. A reply joins
+## the message its In-Reply-To names; replies to the same message missing from the
+## folder join each other; and a reply whose original cannot be found by ID joins the
+## message with the same subject once its Re:/Fwd: prefixes are stripped. Threads are
+## ordered by their newest message, newest first, and so are the messages inside one.
+import memory
+from engine_text import Records, equal
+from mail_store import Index, Row
+
+## One key and the row it came from, for sorted lookup.
+struct Keyed:
+    var digest: u64
+    var row: u32
+
+## A folder's conversations.
+pub struct Threads:
+    ## Row positions, a thread's members together, threads newest first.
+    var order: Records[u32]
+    ## Where each thread starts in `order`, and one past the last thread's end.
+    var starts: Records[u32]
+
+    ## How many conversations there are.
+    pub func count() -> usize:
+        return self.starts.length() - 1 if self.starts.length() > 0 else 0
+
+    ## How many messages conversation `nth` has.
+    pub func size(nth: usize) -> usize:
+        return (usize)(self.starts.at(nth + 1) - self.starts.at(nth))
+
+    ## The row of the `member`-th newest message of conversation `nth`.
+    pub func member(nth: usize, member: usize) -> u32:
+        return self.order.at((usize)self.starts.at(nth) + member)
+
+    pub mutating func close():
+        self.order.close()
+        self.starts.close()
+
+## FNV-1a of `text`, for grouping by message ID or subject.
+func digest_of(text: const u8[]) -> u64:
+    var value: u64 = 0xcbf29ce484222325
+    for byte in text:
+        value = (value ^ byte) *% 0x100000001b3
+    return value
+
+## `subject` without its reply and forward prefixes (Re:, Fwd:, Fw:, AW:, SV:, WG:),
+## repeated or nested, and without surrounding spaces.
+pub func base_subject(subject: const u8[]) -> const u8[]:
+    var text = subject
+    while true:
+        var start: usize = 0
+        while start < text.length and text[start] == ' ':
+            start += 1
+        text = text[start..]
+        var stripped = false
+        for prefix in ["re:", "fwd:", "fw:", "aw:", "sv:", "wg:"]:
+            if text.length >= prefix.length:
+                var matches = true
+                for at in 0..<prefix.length:
+                    let byte = text[at]
+                    let lower = byte + 32 if byte >= 'A' and byte <= 'Z' else byte
+                    if lower != prefix.bytes[at]:
+                        matches = false
+                        break
+                if matches:
+                    text = text[prefix.length..]
+                    stripped = true
+                    break
+        if not stripped:
+            break
+    var end = text.length
+    while end > 0 and text[end - 1] == ' ':
+        end -= 1
+    return text[0..<end]
+
+## Whether `subject` starts with a reply or forward prefix.
+func is_reply(subject: const u8[]) -> bool:
+    return base_subject(subject).length != subject.length and base_subject(subject).length > 0
+
+## Union-find over rows.
+struct Groups:
+    var parent: u32[]
+
+    mutating func find(row: u32) -> u32:
+        var current = row
+        while self.parent[current] != current:
+            self.parent[current] = self.parent[self.parent[current]]
+            current = self.parent[current]
+        return current
+
+    mutating func join(a: u32, b: u32):
+        let root_a = self.find(a)
+        let root_b = self.find(b)
+        if root_a != root_b:
+            self.parent[root_b] = root_a
+
+## Sort `keys` by digest (a merge sort into `scratch`).
+func sort_keys(keys: Keyed[], scratch: Keyed[]):
+    var width: usize = 1
+    while width < keys.length:
+        var start: usize = 0
+        while start < keys.length:
+            let middle = start + width if start + width < keys.length else keys.length
+            let end = start + 2 * width if start + 2 * width < keys.length else keys.length
+            var left = start
+            var right = middle
+            for out in start..<end:
+                if right >= end or (left < middle and keys[left].digest <= keys[right].digest):
+                    scratch[out] = keys[left]
+                    left += 1
+                else:
+                    scratch[out] = keys[right]
+                    right += 1
+            start = end
+        for at in 0..<keys.length:
+            keys[at] = scratch[at]
+        width *= 2
+
+## The first position in sorted `keys` with digest `digest`, or none.
+func lower_bound(keys: const Keyed[], digest: u64) -> usize?:
+    var low: usize = 0
+    var high = keys.length
+    while low < high:
+        let middle = (low + high) // 2
+        if keys[middle].digest < digest:
+            low = middle + 1
+        else:
+            high = middle
+    if low < keys.length and keys[low].digest == digest:
+        return low
+    return none
+
+## Whether row `a` is newer than row `b`: by date, then UID.
+func newer(index: const Index*, a: u32, b: u32) -> bool:
+    let first = index.rows.at((usize)a)
+    let second = index.rows.at((usize)b)
+    if first.date != second.date:
+        return first.date > second.date
+    return first.uid > second.uid
+
+## Group `index`'s rows into conversations.
+pub func thread(index: const Index*) -> Threads!:
+    var threads: Threads
+    errdefer threads.close()
+    let count = index.rows.length()
+    if count == 0:
+        try threads.starts.add(0)
+        return threads
+    var groups = Groups(parent = try alloc u32[count] in memory.heap)
+    defer free(groups.parent) in memory.heap
+    for at in 0..<count:
+        groups.parent[at] = (u32)at
+    let ids = try alloc Keyed[count] in memory.heap
+    defer free(ids) in memory.heap
+    let scratch = try alloc Keyed[count] in memory.heap
+    defer free(scratch) in memory.heap
+    for at in 0..<count:
+        ids[at] = Keyed(digest = digest_of(index.rows.at(at).message_id.bytes), row = (u32)at)
+    sort_keys(ids, scratch)
+    # A reply joins the message it answers.
+    for at in 0..<count:
+        let row = index.rows.at(at)
+        if row.in_reply_to.length == 0:
+            continue
+        if let first = lower_bound(ids, digest_of(row.in_reply_to.bytes)):
+            var probe = first
+            while probe < count and ids[probe].digest == ids[first].digest:
+                if equal(index.rows.at((usize)ids[probe].row).message_id.bytes, row.in_reply_to.bytes):
+                    groups.join(ids[probe].row, (u32)at)
+                probe += 1
+    # Replies to the same missing message join each other.
+    let replies = try alloc Keyed[count] in memory.heap
+    defer free(replies) in memory.heap
+    for at in 0..<count:
+        let row = index.rows.at(at)
+        replies[at] = Keyed(digest = digest_of(row.in_reply_to.bytes) if row.in_reply_to.length > 0 else 0, row = (u32)at)
+    sort_keys(replies, scratch)
+    for at in 1..<count:
+        if replies[at].digest != 0 and replies[at].digest == replies[at - 1].digest:
+            groups.join(replies[at - 1].row, replies[at].row)
+    # A reply still alone joins the thread of the same base subject.
+    let subjects = try alloc Keyed[count] in memory.heap
+    defer free(subjects) in memory.heap
+    for at in 0..<count:
+        let base = base_subject(index.rows.at(at).subject.bytes)
+        subjects[at] = Keyed(digest = digest_of(base) if base.length > 0 else 0, row = (u32)at)
+    sort_keys(subjects, scratch)
+    var start: usize = 0
+    while start < count:
+        var end = start + 1
+        while end < count and subjects[end].digest == subjects[start].digest:
+            end += 1
+        if subjects[start].digest != 0 and end - start > 1:
+            # Join only when a member is a reply: two unrelated "Hello"s stay apart.
+            var anchor: u32? = none
+            for at in start..<end:
+                let row = subjects[at].row
+                if is_reply(index.rows.at((usize)row).subject.bytes):
+                    if let first = anchor:
+                        groups.join(first, row)
+                    else:
+                        anchor = row
+            if let first = anchor:
+                for at in start..<end:
+                    let row = subjects[at].row
+                    if groups.find(row) == row and not is_reply(index.rows.at((usize)row).subject.bytes):
+                        groups.join(first, row)
+        start = end
+    # Order rows: by their thread's newest message, then newest first inside it.
+    let newest = try alloc u32[count] in memory.heap
+    defer free(newest) in memory.heap
+    for at in 0..<count:
+        newest[at] = 0xFFFFFFFF
+    for at in 0..<count:
+        let root = groups.find((u32)at)
+        if newest[root] == 0xFFFFFFFF or newer(index, (u32)at, newest[root]):
+            newest[root] = (u32)at
+    let rows = try alloc u32[count] in memory.heap
+    defer free(rows) in memory.heap
+    for at in 0..<count:
+        rows[at] = (u32)at
+    let spare = try alloc u32[count] in memory.heap
+    defer free(spare) in memory.heap
+    var width: usize = 1
+    while width < count:
+        var begin: usize = 0
+        while begin < count:
+            let middle = begin + width if begin + width < count else count
+            let end = begin + 2 * width if begin + 2 * width < count else count
+            var left = begin
+            var right = middle
+            for out in begin..<end:
+                let take_left = right >= end or (left < middle and not before(index, &groups, newest, rows[right], rows[left]))
+                if take_left:
+                    spare[out] = rows[left]
+                    left += 1
+                else:
+                    spare[out] = rows[right]
+                    right += 1
+            begin = end
+        for at in 0..<count:
+            rows[at] = spare[at]
+        width *= 2
+    for at in 0..<count:
+        if at == 0 or groups.find(rows[at]) != groups.find(rows[at - 1]):
+            try threads.starts.add((u32)at)
+        try threads.order.add(rows[at])
+    try threads.starts.add((u32)count)
+    return threads
+
+## Whether row `a` goes before row `b`: its thread is newer, or, in one thread, it is.
+func before(index: const Index*, groups: Groups*, newest: const u32[], a: u32, b: u32) -> bool:
+    let root_a = groups.find(a)
+    let root_b = groups.find(b)
+    if root_a != root_b:
+        return newer(index, newest[root_a], newest[root_b])
+    return newer(index, a, b)

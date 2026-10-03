@@ -1,7 +1,9 @@
-## The message list: one folder's messages in the classic Mail layout, newest first by date,
-## with columns for the unread dot, the flag, the attachment clip, the sender, the
-## subject and the date. Unread rows are bold; flagged ones carry a yellow flag. A
-## filter narrows the rows to those whose sender or subject holds its text.
+## The message list: one folder in the classic Mail layout, newest first by date, with
+## columns for the unread dot, the flag, the attachment clip, the sender, the subject,
+## a conversation's message count and the date. Organized by conversation (the default, as in Mail), a row is a whole
+## thread: its newest message's sender, subject and date, the number of messages, and
+## a dot or flag when any message has one. Unread rows are bold. A filter narrows the
+## rows to those whose sender or subject holds its text.
 from ui import TableView, TableColumn, TableCell, CellAlign, Font
 from mail_index import MessageIndex
 import clock
@@ -12,11 +14,14 @@ from sources import seen_flag, flagged_flag
 pub class MessageList:
     pub let table: TableView
     var index: MessageIndex? = none
-    ## Index positions of the rows shown, in display order.
+    ## What each row shows, in display order: a conversation's number when threaded,
+    ## a message's index position otherwise.
     var rows: list[int] = []
+    ## Whether rows are conversations.
+    pub var threaded: bool = true
     var filter: str = ""
     var shown_uid: int = -1
-    ## Called with the UID of the message picked, or -1 when none is.
+    ## Called with the UID of the (newest) message picked, or -1 when none is.
     pub var on_pick: func(int) -> unit!? = none
 
     pub func init(self, font: Font) -> unit!:
@@ -25,6 +30,7 @@ pub class MessageList:
                        TableColumn(title = "", width = 28.0, minimum = 28.0, align = CellAlign.center),
                        TableColumn(title = "From", width = 190.0),
                        TableColumn(title = "Subject", weight = 1.0),
+                       TableColumn(title = "", width = 36.0, minimum = 28.0, align = CellAlign.right),
                        TableColumn(title = "Date", width = 110.0, align = CellAlign.right)]
         self.table = TableView(columns, [], font = font)
 
@@ -43,28 +49,52 @@ pub class MessageList:
         self.filter = text.trim().lower()
         self.rebuild()
 
+    ## Show conversations, or every message on its own.
+    pub func set_threaded(self, threaded: bool) -> unit!:
+        self.threaded = threaded
+        self.rebuild()
+
+    ## The index position of the message a row stands for: a conversation's newest.
+    func lead(self, index: MessageIndex, row: int) -> int:
+        return index.thread_member(row, 0) if self.threaded else row
+
+    func matches(self, index: MessageIndex, at: int) -> bool:
+        return self.filter == "" or self.filter in index.sender(at).lower() or self.filter in index.subject(at).lower()
+
     func rebuild(self) -> unit!:
         var cells: list[TableCell] = []
         var rows: list[int] = []
         var keep = -1
         if let index = self.index:
-            for nth in 0..<index.count():
-                let at = index.newest(nth)
-                if self.filter == "" or self.filter in index.sender(at).lower() or self.filter in index.subject(at).lower():
-                    let flags = index.flags(at)
-                    let unread = not mail_index.has(flags, seen_flag)
-                    let flagged = mail_index.has(flags, flagged_flag)
-                    if index.uid(at) == self.shown_uid:
-                        keep = rows.length
-                    rows.append(at)
-                    cells.append(TableCell(text = "●" if unread else "", tint = theme.unread()))
-                    cells.append(TableCell(text = "⚑" if flagged else "", tint = theme.flag()))
-                    cells.append(TableCell(text = "@" if index.attachment(at) else "", muted = true))
-                    let sender = index.sender(at)
-                    cells.append(TableCell(text = sender if sender != "" else "(no sender)", emphasis = unread))
-                    let subject = index.subject(at)
-                    cells.append(TableCell(text = subject if subject != "" else "(no subject)", emphasis = unread))
-                    cells.append(TableCell(text = clock.list_date(index.date(at)), muted = true))
+            let count = index.thread_count() if self.threaded else index.count()
+            for nth in 0..<count:
+                let row = nth if self.threaded else index.newest(nth)
+                let at = self.lead(index, row)
+                if not self.matches(index, at):
+                    continue
+                var unread = not mail_index.has(index.flags(at), seen_flag)
+                var flagged = mail_index.has(index.flags(at), flagged_flag)
+                var attachment = index.attachment(at)
+                var size = 1
+                if self.threaded:
+                    unread = index.thread_any(row, seen_flag, false)
+                    flagged = index.thread_any(row, flagged_flag, true)
+                    attachment = index.thread_attachment(row)
+                    size = index.thread_size(row)
+                if index.uid(at) == self.shown_uid:
+                    keep = rows.length
+                rows.append(row)
+                cells.append(TableCell(text = "●" if unread else "", tint = theme.unread()))
+                cells.append(TableCell(text = "⚑" if flagged else "", tint = theme.flag()))
+                cells.append(TableCell(text = "@" if attachment else "", muted = true))
+                let sender = index.sender(at)
+                cells.append(TableCell(text = sender if sender != "" else "(no sender)", emphasis = unread))
+                let subject = index.subject(at)
+                let title = subject if subject != "" else "(no subject)"
+                cells.append(TableCell(text = title, emphasis = unread))
+                # A conversation's message count, beside the date as Mail shows it.
+                cells.append(TableCell(text = f"{size}" if size > 1 else "", muted = true))
+                cells.append(TableCell(text = clock.list_date(index.date(at)), muted = true))
         self.rows = rows
         self.table.set_rows(cells)
         if keep >= 0:
@@ -74,21 +104,44 @@ pub class MessageList:
             if let pick = self.on_pick:
                 pick(-1)
 
-    ## The UID of the picked message, or -1.
+    ## The picked row, if any.
+    func picked_row(self) -> int?:
+        let at = self.table.selected_index()
+        if at < 0 or at >= self.rows.length:
+            return none
+        return self.rows[at]
+
+    ## The UID of the picked message (a conversation's newest), or -1.
     pub func picked_uid(self) -> int:
         let index = self.index else return -1
-        let at = self.table.selected_index()
-        if at < 0 or at >= self.rows.length:
-            return -1
-        return index.uid(self.rows[at])
+        let row = self.picked_row() else return -1
+        return index.uid(self.lead(index, row))
 
-    ## The picked message's flags, or 0.
+    ## The UIDs of every message the pick stands for: a whole conversation, newest first.
+    pub func picked_uids(self) -> list[int]:
+        var uids: list[int] = []
+        let index = self.index else return uids
+        let row = self.picked_row() else return uids
+        if not self.threaded:
+            uids.append(index.uid(row))
+            return uids
+        for member in 0..<index.thread_size(row):
+            uids.append(index.uid(index.thread_member(row, member)))
+        return uids
+
+    ## The picked message's flags (a conversation's newest), or 0.
     pub func picked_flags(self) -> int:
         let index = self.index else return 0
-        let at = self.table.selected_index()
-        if at < 0 or at >= self.rows.length:
-            return 0
-        return index.flags(self.rows[at])
+        let row = self.picked_row() else return 0
+        return index.flags(self.lead(index, row))
+
+    ## Whether any message of the pick is unread.
+    pub func picked_unread(self) -> bool:
+        let index = self.index else return false
+        let row = self.picked_row() else return false
+        if self.threaded:
+            return index.thread_any(row, seen_flag, false)
+        return not mail_index.has(index.flags(row), seen_flag)
 
     ## Pick the next row after a message leaves the list (deleted, moved).
     pub func pick_next(self) -> unit!:
