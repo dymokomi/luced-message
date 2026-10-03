@@ -1,0 +1,33 @@
+## The message list's selection: several conversations at once, kept across a rebuild.
+from message_list import MessageList
+from ui import Font
+import mail_index
+import files
+import paths
+
+func check(condition: bool, what: str):
+    assert(condition, what)
+
+pub func run(directory: str) -> unit!:
+    let path = paths.join(directory, "selection-index")
+    let rows = ["1\t1\t100\t1\t0\tCarol\tPlan\tp1\t\t", "2\t0\t200\t1\t0\tDave\tRe: Plan\tp2\tp1\t",
+                "3\t1\t150\t1\t1\tBob\tLunch\tl1\t\t", "4\t1\t300\t1\t0\tEve\tRe: Plan\tp3\tp2\t",
+                "7\t1\t70\t1\t0\tZed\tHello\th1\t\t", "9\t1\t400\t1\t0\tKim\tFwd: Lunch\tf1\t\t"]
+    files.write_text(path, "luced-message index 1\t1\t10\t0\n" + rows.join("\n") + "\n")
+    # Rows: Lunch (9, 3), Plan (4, 2, 1), Hello (7).
+    let messages = MessageList(Font())
+    messages.show(mail_index.read_index(path))
+    messages.table.select(0)
+    messages.table.mark(1, true)
+    messages.poll()
+    check(messages.picked_count() == 2, "two conversations selected")
+    check(messages.picked_leads() == [9, 4], "each conversation's newest")
+    check(messages.picked_uids() == [9, 3, 4, 2, 1], "whole conversations")
+    check(messages.shown_uids() == [9, 3], "the reader shows the picked conversation")
+    check(not messages.picked_unread(), "the picked conversation is read")
+    # New mail rebuilds the rows; the selection stays.
+    messages.show(mail_index.read_index(path))
+    check(messages.picked_count() == 2 and messages.picked_leads() == [9, 4], "kept across a rebuild")
+    # Deleting them picks the row after the last selected.
+    messages.pick_next()
+    check(messages.picked_leads() == [7], "the next row is picked")

@@ -251,12 +251,16 @@ pub class Panels:
         if uid < 0:
             self.reader.clear()
             return
+        let count = self.messages.picked_count()
+        if count > 1:
+            self.reader.many(count, "conversations" if self.messages.threaded else "messages")
+            return
         let file = source.message_file(self.folder, uid)
         if file == "":
             self.reader.loading(self.source, self.folder, uid)
             source.fetch(self.folder, uid)
             return
-        let members = self.messages.picked_uids()
+        let members = self.messages.shown_uids()
         var earlier: list[str] = []
         for member in members:
             if member == uid:
@@ -299,7 +303,7 @@ pub class Panels:
             return
         self.composer.forward(source, shown)
 
-    ## Move the picked message to Trash, or mark it deleted when there is no Trash.
+    ## Move the selected conversations to Trash, or mark them deleted when there is no Trash.
     func delete(self) -> unit!:
         let source = self.current() else return
         let uids = self.messages.picked_uids()
@@ -309,7 +313,7 @@ pub class Panels:
         if not source.move_to(self.folder, uids, "trash"):
             source.set_flags(self.folder, uids, true, deleted_flag)
 
-    ## Move the picked message to the folder with `role` (archive, junk).
+    ## Move the selected conversations to the folder with `role` (archive, junk).
     func file_to(self, role: str) -> unit!:
         let source = self.current() else return
         let uids = self.messages.picked_uids()
@@ -319,24 +323,24 @@ pub class Panels:
         if not source.move_to(self.folder, uids, role):
             self.tell(f"This account has no {role} folder.")
 
-    ## Flag the picked message (a conversation's newest), or clear the flag from every
-    ## message of the pick when it has one.
+    ## Flag each selected conversation's newest message, or, when the picked one is
+    ## flagged, clear the flag from every message of the selection.
     func toggle_flag(self) -> unit!:
         let source = self.current() else return
-        let uid = self.messages.picked_uid()
-        if uid < 0:
+        if self.messages.picked_uid() < 0:
             return
         if mail_index.has(self.messages.picked_flags(), flagged_flag):
             source.set_flags(self.folder, self.messages.picked_uids(), false, flagged_flag)
         else:
-            source.set_flags(self.folder, [uid], true, flagged_flag)
+            source.set_flags(self.folder, self.messages.picked_leads(), true, flagged_flag)
 
+    ## Mark each selected conversation's newest message unread.
     func mark_unread(self) -> unit!:
         let source = self.current() else return
-        let uid = self.messages.picked_uid()
-        if uid < 0:
+        let uids = self.messages.picked_leads()
+        if uids.length == 0:
             return
-        source.set_flags(self.folder, [uid], false, seen_flag)
+        source.set_flags(self.folder, uids, false, seen_flag)
 
     pub func close(self):
         for source in self.sources:

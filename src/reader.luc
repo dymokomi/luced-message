@@ -70,6 +70,11 @@ pub class Reader:
         self.text.set_text("")
         self.set_attachments([])
 
+    ## Say how many conversations or messages are selected, as Mail does for several.
+    pub func many(self, count: int, noun: str) -> unit!:
+        self.clear()
+        self.subject_line.set_text(f"{count} {noun} selected")
+
     ## Say that message `uid` is on its way.
     pub func loading(self, source: int, folder: str, uid: int) -> unit!:
         self.clear()
