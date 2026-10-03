@@ -1,17 +1,15 @@
-## The local store, as the mail engine writes it and the window reads it:
+## What the mail store holds, and where message bodies live. Folders and the rows a
+## message list shows are kept in luce-prism (see mail_db); a fetched message's raw
+## text is a file beside it, since bodies are most of a mailbox's bytes:
 ##
-##     <root>/<account>/folders            one line per folder
-##     <root>/<account>/<key>/index        one line per message, by UID
-##     <root>/<account>/<key>/<uid>.eml    the message itself, once fetched
+##     <root>/<account>/<key>/<uid>.eml
 ##
-## A folder's key is a hash of its server path, so any name makes a safe directory.
-## Files are written whole and atomically: a reader never sees half of one. Lines are
-## tab-separated fields (engine_text's escaping); the first line names the format.
+## A folder's key is a hash of its server path, so any name makes a safe directory and
+## a valid prism identity.
 import c
 from luce_std import files
-import memory
 import strings
-from engine_text import Buffer, Pool, Records, Fields, equal
+from engine_text import Buffer
 
 ## One message's row in a folder index.
 pub struct Row:
@@ -30,159 +28,6 @@ pub struct Row:
     ## The opening of the body; empty until the body is fetched.
     pub var preview: str
 
-## The first line of an index file.
-let index_magic: str = "luced-message index 1"
-## The first line of a folders file.
-let folders_magic: str = "luced-message folders 1"
-
-## A folder's messages, sorted by UID, and its mailbox state.
-pub struct Index:
-    pub var rows: Records[Row]
-    var pool: Pool
-    pub var uid_validity: u32
-    pub var uid_next: u32
-    pub var modseq: u64
-    ## Whether the index changed since it was loaded or saved.
-    pub var changed: bool
-
-    ## Load the index at `path`; an empty index when there is none or it is unreadable.
-    pub static func load(path: c.str) -> Index!:
-        var index: Index
-        if not files.exists(path):
-            return index
-        let data: u8[]? = files.read(path) catch failure:
-            recover none
-        let bytes = data else return index
-        defer free(bytes)
-        var start: usize = 0
-        var first = true
-        var line_buffer: Buffer
-        defer line_buffer.close()
-        for at in 0..<bytes.length + 1:
-            if at < bytes.length and bytes[at] != '\n':
-                continue
-            let line = bytes[start..<at]
-            start = at + 1
-            if line.length == 0:
-                continue
-            let fields = Fields.split(line)
-            if first:
-                first = false
-                if not equal(fields.raw(0), index_magic.bytes):
-                    return index
-                index.uid_validity = (u32)fields.number(1)
-                index.uid_next = (u32)fields.number(2)
-                index.modseq = (u64)fields.number(3)
-                continue
-            if fields.length() < 10:
-                continue
-            var row = Row(uid = (u32)fields.number(0), flags = (u16)fields.number(1), date = fields.number(2),
-                          size = (u32)fields.number(3), attachment = fields.number(4) != 0,
-                          sender = "", subject = "", message_id = "", in_reply_to = "", preview = "")
-            row.sender = try index.field(&fields, 5, &line_buffer)
-            row.subject = try index.field(&fields, 6, &line_buffer)
-            row.message_id = try index.field(&fields, 7, &line_buffer)
-            row.in_reply_to = try index.field(&fields, 8, &line_buffer)
-            row.preview = try index.field(&fields, 9, &line_buffer)
-            try index.rows.add(row)
-        return index
-
-    mutating func field(fields: const Fields*, at: usize, scratch: Buffer*) -> str!:
-        scratch.clear()
-        try fields.unescape(at, scratch)
-        return try self.pool.keep_text(scratch.view())
-
-    ## Keep text `data` for a row.
-    pub mutating func keep(data: const u8[]) -> str!:
-        return try self.pool.keep_text(data)
-
-    ## Write the index to `path` atomically.
-    pub mutating func save(path: c.str) -> !:
-        var out: Buffer
-        defer out.close()
-        try out.text(index_magic)
-        try out.byte('\t')
-        try out.number((i64)self.uid_validity)
-        try out.byte('\t')
-        try out.number((i64)self.uid_next)
-        try out.byte('\t')
-        try out.number((i64)self.modseq)
-        try out.byte('\n')
-        for row in self.rows.view():
-            try out.number((i64)row.uid)
-            try out.byte('\t')
-            try out.number((i64)row.flags)
-            try out.byte('\t')
-            try out.number(row.date)
-            try out.byte('\t')
-            try out.number((i64)row.size)
-            try out.byte('\t')
-            try out.byte('1' if row.attachment else '0')
-            for text in [row.sender, row.subject, row.message_id, row.in_reply_to, row.preview]:
-                try out.byte('\t')
-                try out.field(text.bytes)
-            try out.byte('\n')
-        try files.write_atomic(path, out.view())
-        self.changed = false
-
-    ## The position of the row with UID `uid`, or none.
-    pub func find(uid: u32) -> usize?:
-        var low: usize = 0
-        var high = self.rows.length()
-        while low < high:
-            let middle = (low + high) // 2
-            let found = self.rows.at(middle).uid
-            if found == uid:
-                return middle
-            if found < uid:
-                low = middle + 1
-            else:
-                high = middle
-        return none
-
-    ## The largest UID held, or zero.
-    pub func last_uid() -> u32:
-        if self.rows.length() == 0:
-            return 0
-        return self.rows.at(self.rows.length() - 1).uid
-
-    ## Add `row`, or replace the row with its UID, keeping the rows sorted.
-    pub mutating func put(row: Row) -> !:
-        self.changed = true
-        if let at = self.find(row.uid):
-            self.rows.set(at, row)
-            return
-        try self.rows.add(row)
-        var at = self.rows.length() - 1
-        while at > 0 and self.rows.at(at - 1).uid > row.uid:
-            self.rows.set(at, self.rows.at(at - 1))
-            at -= 1
-        self.rows.set(at, row)
-
-    ## Remove the row with UID `uid`, if there is one.
-    pub mutating func remove(uid: u32):
-        if let at = self.find(uid):
-            self.rows.remove(at)
-            self.changed = true
-
-    ## Forget every row (the mailbox's UIDVALIDITY changed).
-    pub mutating func clear():
-        self.rows.clear()
-        self.pool.close()
-        self.changed = true
-
-    ## How many rows are not marked seen.
-    pub func unseen() -> u32:
-        var count: u32 = 0
-        for row in self.rows.view():
-            if (row.flags & 1) == 0:
-                count += 1
-        return count
-
-    pub mutating func close():
-        self.rows.close()
-        self.pool.close()
-
 ## A folder as the store lists it.
 pub struct Folder:
     ## The server's name for it, used in commands.
@@ -196,29 +41,6 @@ pub struct Folder:
     pub var key: str
     pub var total: u32
     pub var unseen: u32
-
-## Write `folders` to the folders file at `path` atomically.
-pub func save_folders(path: c.str, folders: const Folder[]) -> !:
-    var out: Buffer
-    defer out.close()
-    try out.text(folders_magic)
-    try out.byte('\n')
-    for folder in folders:
-        try out.field(folder.path.bytes)
-        try out.byte('\t')
-        try out.field(folder.name.bytes)
-        try out.byte('\t')
-        try out.number((i64)folder.delimiter)
-        try out.byte('\t')
-        try out.number((i64)folder.flags)
-        try out.byte('\t')
-        try out.text(folder.key)
-        try out.byte('\t')
-        try out.number((i64)folder.total)
-        try out.byte('\t')
-        try out.number((i64)folder.unseen)
-        try out.byte('\n')
-    try files.write_atomic(path, out.view())
 
 ## Append the store key of folder `path`: sixteen hex digits of its FNV-1a hash.
 pub func put_key(path: const u8[], out: Buffer*) -> !:

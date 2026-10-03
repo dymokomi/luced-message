@@ -7,6 +7,8 @@
 
 pub struct Engine:
     var room: Mailroom*
+    ## The mail database the window shares; it outlives the engine.
+    var store: prism.Store*
     var text: Pool
     var account: Account
     var session: imap.Session
@@ -20,7 +22,8 @@ pub struct Engine:
 
     ## An engine for the account in `room`'s configuration line.
     pub static func create(room: Mailroom*) -> Engine!:
-        var engine = Engine(room = room, account = Account(id = "", root = "", imap_host = "", imap_port = 993, imap_security = imap.Security.tls, user = "", password = "", smtp_host = "", smtp_port = 587, smtp_security = smtp.Security.starttls, smtp_user = "", smtp_password = ""), wants_full_sync = true)
+        let store = room.store else error(prism.closed, "the mail engine has no store")
+        var engine = Engine(room = room, store = store, account = Account(id = "", root = "", imap_host = "", imap_port = 993, imap_security = imap.Security.tls, user = "", password = "", smtp_host = "", smtp_port = 587, smtp_security = smtp.Security.starttls, smtp_user = "", smtp_password = ""), wants_full_sync = true)
         errdefer engine.close()
         let fields = Fields.split(room.config.view())
         var scratch: Buffer
@@ -171,11 +174,12 @@ pub struct Engine:
         try out.byte('/')
         try put_key(path, out)
 
-    ## `<folder directory>/<name>` onto `out`.
-    func folder_file(path: const u8[], name: const u8[], out: Buffer*) -> !:
-        try self.folder_directory(path, out)
-        try out.byte('/')
-        try out.put(name)
+    ## The prism identity of folder `path` onto `out`.
+    func folder_identity_of(path: const u8[], out: Buffer*) -> !:
+        var key: Buffer
+        defer key.close()
+        try put_key(path, &key)
+        try mail_db.folder_identity(self.account.id, key.view(), out)
 
     ## `<folder directory>/<uid>.eml` onto `out`.
     func message_file(path: const u8[], uid: u32, out: Buffer*) -> !:

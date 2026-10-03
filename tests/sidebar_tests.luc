@@ -5,6 +5,7 @@ from sidebar import Sidebar
 from sources import Source, FolderInfo, SourceEvent
 from mail_index import MessageIndex
 import mail_index
+from luce_prism import prism
 from luce_ui.ui import Font
 
 ## A source whose folders the test sets.
@@ -20,7 +21,7 @@ class Listed: Source:
     pub func folders(self) -> list[FolderInfo]!:
         return self.listed
     pub func messages(self, folder: str) -> MessageIndex!:
-        return mail_index.read_index("/nonexistent/index")
+        return mail_index.read_index(prism.Store.memory(), "")
     pub func message_file(self, folder: str, uid: int) -> str!:
         return ""
     pub func fetch(self, folder: str, uid: int) -> unit!:

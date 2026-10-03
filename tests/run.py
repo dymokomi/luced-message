@@ -18,7 +18,7 @@ environment = dict(os.environ, LUCE_BASE=str(arguments.base.resolve()), LUCE_CAC
 with tempfile.TemporaryDirectory(prefix='luced-message-tests-') as temp:
     project = Path(temp) / 'application'
     shutil.copytree(ROOT / 'src', project / 'src')
-    for module in (ROOT / 'tests').glob('*.luc'):
+    for module in [*(ROOT / 'tests').glob('*.luc'), *(ROOT / 'tests').glob('*.lucb')]:
         shutil.copy2(module, project / 'src' / module.name)
     manifest = (ROOT / 'package.prisma').read_text()
     for name in re.findall(r'def dependency "([^"]+)"', manifest):

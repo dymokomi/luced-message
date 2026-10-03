@@ -16,6 +16,8 @@ from account_dialog import AccountDialog
 from luce_std import paths
 import mail_index
 import mail_store
+import mail_db
+from luce_prism import prism
 
 pub class Panels:
     pub let body: VStack
@@ -30,6 +32,8 @@ pub class Panels:
     let search: TextField
     let palette: CommandPalette
     let store: AccountStore
+    ## The mail database every account's engine writes and the window reads.
+    let mail: prism.Store
     let directory: str
     var connections: list[Connection] = []
     pub var sources: list[Source] = []
@@ -42,6 +46,8 @@ pub class Panels:
     pub func init(self, font: Font, directory: str = "") -> unit!:
         self.directory = directory if directory != "" else home()
         self.store = AccountStore(self.directory)
+        mail_store.ensure_path(self.directory)
+        self.mail = prism.Store.open(paths.join(self.directory, "mail.prism"))
         self.actions = Actions()
         self.sidebar = Sidebar(font)
         self.messages = MessageList(font)
@@ -146,7 +152,7 @@ pub class Panels:
             self.tell(self.store.warning)
         let store = paths.join(self.directory, "store")
         for account in self.accounts:
-            self.sources.append(EmailSource(account, store))
+            self.sources.append(EmailSource(account, store, self.mail))
         self.sidebar.refresh(self.sources)
         if self.sources.length == 0:
             self.tell("No accounts yet: Mailbox › Accounts… adds one.")
@@ -159,6 +165,8 @@ pub class Panels:
         self.store.forget(id) catch failure:
             self.tell(f"The keychain kept the password: {failure.message}")
         self.save_accounts(accounts)
+        mail_db.forget_account(self.mail, id) catch failure:
+            self.tell(f"The stored mail was not removed: {failure.message}")
         mail_store.remove_path(paths.join(paths.join(self.directory, "store"), id)) catch failure:
             self.tell(f"The stored mail was not removed: {failure.message}")
 
@@ -349,6 +357,8 @@ pub class Panels:
     pub func close(self):
         for source in self.sources:
             source.close()
+        # Every engine has stopped; the database goes last.
+        self.mail.close()
         for connection in self.connections:
             connection.disconnect()
         self.connections.clear()

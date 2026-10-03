@@ -1,0 +1,41 @@
+## Mail in a memory prism store, laid out as the engine writes it (see mail_db).
+from luce_prism import prism
+
+## Rows of tab-separated fields: uid flags date size attachment sender subject
+## message-id in-reply-to preview. `\t` and `\n` in a field stand for a tab and a newline.
+pub func folder_with(store: prism.Store, identity: str, rows: list[str]) -> unit!:
+    if not store.mounted(identity):
+        store.mount(identity)
+    let tx = store.begin_identity(identity)
+    for line in rows:
+        let field = line.split("\t")
+        let path = f"/m{field[0]}"
+        tx.add(path, "message")
+        for (at, name) in ["uid", "flags", "date", "size"].indexed():
+            tx.set(path, name, prism.Value.integer(int(field[at])))
+        tx.set(path, "attachment", prism.Value.boolean(field[4] == "1"))
+        for (at, name) in ["sender", "subject", "message_id", "in_reply_to", "preview"].indexed():
+            tx.set(path, name, prism.Value.text(unescape(field[5 + at])))
+    discard(tx.commit())
+
+## Folders of tab-separated fields: path name delimiter flags key total unseen, listed
+## in that order.
+pub func account_with(store: prism.Store, account: str, folders: list[str]) -> unit!:
+    if not store.mounted(account):
+        store.mount(account)
+    let tx = store.begin_identity(account)
+    for (order, line) in folders.indexed():
+        let field = line.split("\t")
+        let path = f"/f{field[4]}"
+        tx.add(path, "folder")
+        tx.set(path, "path", prism.Value.text(field[0]))
+        tx.set(path, "name", prism.Value.text(field[1]))
+        tx.set(path, "delimiter", prism.Value.integer(int(field[2])))
+        tx.set(path, "flags", prism.Value.integer(int(field[3])))
+        tx.set(path, "order", prism.Value.integer(order))
+        tx.set(path, "total", prism.Value.integer(int(field[5])))
+        tx.set(path, "unseen", prism.Value.integer(int(field[6])))
+    discard(tx.commit())
+
+func unescape(text: str) -> str:
+    return text.replace("\\t", "\t").replace("\\n", "\n")

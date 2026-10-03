@@ -4,6 +4,7 @@
 ## the engine looks for commands between its network steps.
 import memory
 import sync
+from luce_prism import prism
 from engine_text import Buffer
 
 pub struct Mailroom:
@@ -15,6 +16,8 @@ pub struct Mailroom:
     var events: Buffer
     ## The engine's configuration, set before its thread starts.
     pub var config: Buffer
+    ## The mail database, borrowed from the window, which closes it after the engine.
+    pub var store: prism.Store*?
 
     ## Queue command `line` for the engine (window side).
     pub mutating func push(line: const u8[]) -> !:

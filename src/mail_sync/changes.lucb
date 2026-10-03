@@ -20,26 +20,29 @@ extend Engine:
         try self.update_index(path, uids, 0, false, true)
         self.wants_full_sync = true
 
-    ## Apply a flag change or a removal to folder `path`'s index and announce it.
+    ## Apply a flag change or a removal to folder `path` in the store and announce it.
     mutating func update_index(path: const u8[], uids: const u8[], bits: u16, add: bool, remove: bool) -> !:
-        var index_path: Buffer
-        defer index_path.close()
-        try self.folder_file(path, b"index", &index_path)
-        var index = try Index.load(try index_path.terminated())
-        defer index.close()
+        var identity: Buffer
+        defer identity.close()
+        try self.folder_identity_of(path, &identity)
+        var ledger = try mail_db.read_ledger(self.store, identity.text_view())
+        defer ledger.close()
+        var batch = try mail_db.Batch.begin(self.store, identity.text_view())
+        defer batch.close()
         var numbers: Records[u32]
         defer numbers.close()
         try read_set(uids, &numbers)
         for uid in numbers.view():
             if remove:
-                index.remove(uid)
-            elif let at = index.find(uid):
-                var row = index.rows.at(at)
-                row.flags = (row.flags | bits) if add else (row.flags & ~bits)
-                index.rows.set(at, row)
-                index.changed = true
-        if index.changed:
-            try index.save(try index_path.terminated())
+                try batch.remove(uid)
+            elif let at = ledger.find(uid):
+                let flags = ledger.flags.at(at)
+                let updated = (flags | bits) if add else (flags & ~bits)
+                if updated != flags:
+                    try batch.set_flags(uid, updated)
+        let changed = batch.count > 0
+        try batch.commit()
+        if changed:
             self.post("folder", path)
 
     ## Send the message in `file` from `sender` to the comma-separated `recipients`.

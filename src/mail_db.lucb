@@ -1,0 +1,378 @@
+## The mail database: how luced-message keeps mail in luce-prism. One durable Store
+## per app holds an identity per account, listing its folders, and one per folder,
+## holding its messages:
+##
+##     <account>          /f<key>   folder: path, name, delimiter, flags, order, total, unseen
+##     <account>.<key>    /state    uid_validity, uid_next, modseq
+##                        /m<uid>   message: uid, flags, date, size, attachment, sender,
+##                                  subject, message_id, in_reply_to, preview
+##
+## A folder has its own identity because a bake rewrites its identity whole: syncing
+## one folder then costs that folder, not the account. Message bodies stay files
+## beside the store (mail_store) for the same reason; they are most of the bytes.
+import interop
+from luce_prism import prism
+from engine_text import Buffer, Pool, Records
+from mail_store import Row, Folder
+
+## How long a commit or bake waits for another writer of the same identity.
+let wait_ms: i64 = 1000
+
+## The identity of `account`'s folder with store key `key`, onto `out`.
+pub func folder_identity(account: str, key: const u8[], out: Buffer*) -> !:
+    out.clear()
+    try out.text(account)
+    try out.byte('.')
+    try out.put(key)
+
+## Mount `identity` unless the store has it already.
+pub func ensure(store: prism.Store*, identity: str) -> !:
+    if try store.mounted(identity):
+        return
+    store.mount(identity) catch failure:
+        # Another engine thread may have mounted it between the look and the mount.
+        if not try store.mounted(identity):
+            error(failure.code, failure.message)
+
+## One commit's worth of writes to one identity.
+pub struct Batch:
+    var store: prism.Store*
+    var identity: Buffer
+    var session: interop.Reference[prism.Session]?
+    var path: Buffer
+    ## How many writes the commit will carry.
+    pub var count: usize
+
+    ## Writes to `identity`, which is mounted when it is new.
+    pub static func begin(store: prism.Store*, identity: str) -> Batch!:
+        try ensure(store, identity)
+        var batch = Batch(store = store)
+        errdefer batch.close()
+        try batch.identity.text(identity)
+        batch.session = try store.begin_identity(identity)
+        return batch
+
+    func session_of() -> prism.Session*!:
+        let held = self.session else error(prism.closed, "the mail batch is closed")
+        return try held.get()
+
+    mutating func message_path(uid: u32) -> str!:
+        self.path.clear()
+        try self.path.put(b"/m")
+        try self.path.number((i64)uid)
+        return self.path.text_view()
+
+    mutating func element(path: str, kind: str) -> !:
+        let session = try self.session_of()
+        if not try session.contains(path):
+            try session.add(path, kind)
+
+    func integer(path: str, name: str, value: i64) -> !:
+        let held = try prism.Value.integer(value)
+        defer held.release()
+        try (try self.session_of()).set(path, name, held)
+
+    func text(path: str, name: str, value: str) -> !:
+        let held = try prism.Value.text(value)
+        defer held.release()
+        try (try self.session_of()).set(path, name, held)
+
+    func boolean(path: str, name: str, value: bool) -> !:
+        let held = try prism.Value.boolean(value)
+        defer held.release()
+        try (try self.session_of()).set(path, name, held)
+
+    ## Add message `row`, or replace every field of the one with its UID.
+    pub mutating func put_row(row: const Row*) -> !:
+        let path = try self.message_path(row.uid)
+        try self.element(path, "message")
+        try self.integer(path, "uid", (i64)row.uid)
+        try self.integer(path, "flags", (i64)row.flags)
+        try self.integer(path, "date", row.date)
+        try self.integer(path, "size", (i64)row.size)
+        try self.boolean(path, "attachment", row.attachment)
+        try self.text(path, "sender", row.sender)
+        try self.text(path, "subject", row.subject)
+        try self.text(path, "message_id", row.message_id)
+        try self.text(path, "in_reply_to", row.in_reply_to)
+        try self.text(path, "preview", row.preview)
+        self.count += 1
+
+    pub mutating func set_flags(uid: u32, flags: u16) -> !:
+        let path = try self.message_path(uid)
+        try self.integer(path, "flags", (i64)flags)
+        self.count += 1
+
+    ## What a fetched body tells the list: its opening and whether it has attachments.
+    pub mutating func set_body_summary(uid: u32, preview: str, attachment: bool) -> !:
+        let path = try self.message_path(uid)
+        if not try (try self.session_of()).contains(path):
+            return
+        try self.text(path, "preview", preview)
+        try self.boolean(path, "attachment", attachment)
+        self.count += 1
+
+    pub mutating func remove(uid: u32) -> !:
+        let path = try self.message_path(uid)
+        let session = try self.session_of()
+        if try session.contains(path):
+            try session.remove(path)
+            self.count += 1
+
+    ## The folder's mailbox state.
+    pub mutating func put_state(uid_validity: u32, uid_next: u32, modseq: u64) -> !:
+        try self.element("/state", "state")
+        try self.integer("/state", "uid_validity", (i64)uid_validity)
+        try self.integer("/state", "uid_next", (i64)uid_next)
+        try self.integer("/state", "modseq", (i64)modseq)
+        self.count += 1
+
+    ## Folder `folder`, listed at place `order`.
+    pub mutating func put_folder(folder: const Folder*, order: usize) -> !:
+        self.path.clear()
+        try self.path.put(b"/f")
+        try self.path.text(folder.key)
+        let path = self.path.text_view()
+        try self.element(path, "folder")
+        try self.text(path, "path", folder.path)
+        try self.text(path, "name", folder.name)
+        try self.integer(path, "delimiter", (i64)folder.delimiter)
+        try self.integer(path, "flags", (i64)folder.flags)
+        try self.integer(path, "order", (i64)order)
+        try self.integer(path, "total", (i64)folder.total)
+        try self.integer(path, "unseen", (i64)folder.unseen)
+        self.count += 1
+
+    ## Remove every element but those named in `keep` (paths, sorted or not).
+    pub mutating func remove_others(keep: const str[]) -> !:
+        let session = try self.session_of()
+        let children = try session.children("/")
+        defer children.release()
+        for i in 0..<children.value().count():
+            let path = try children.value().at(i)
+            var kept = false
+            for wanted in keep:
+                if wanted == path:
+                    kept = true
+                    break
+            if not kept:
+                try session.remove(path)
+                self.count += 1
+
+    ## Commit the writes so far, if there are any, and go on writing in a new commit:
+    ## a long sync shows its progress commit by commit.
+    pub mutating func flush() -> !:
+        if self.count == 0:
+            return
+        let session = try self.session_of()
+        discard(try session.commit(wait_ms = wait_ms))
+        if let held = self.session:
+            held.release()
+        self.session = none
+        self.count = 0
+        self.session = try self.store.begin_identity(self.identity.text_view())
+
+    ## Commit the writes, if there are any, and end the batch.
+    pub mutating func commit() -> !:
+        if self.count > 0:
+            discard(try (try self.session_of()).commit(wait_ms = wait_ms))
+        self.close()
+
+    pub mutating func close():
+        if let held = self.session:
+            held.release()
+        self.session = none
+        self.identity.close()
+        self.path.close()
+
+## Apply the identity's unbaked commits to its tables, so later reads and opens do not
+## replay them. The engine bakes a folder after syncing it.
+pub func bake(store: prism.Store*, identity: str) -> !:
+    if try store.mounted(identity):
+        discard(try store.bake_identity(identity, wait_ms = wait_ms))
+
+## A folder's mailbox state and, for the engine, its messages' UIDs and flags.
+pub struct Ledger:
+    pub var uid_validity: u32
+    pub var uid_next: u32
+    pub var modseq: u64
+    ## Sorted by UID.
+    pub var uids: Records[u32]
+    pub var flags: Records[u16]
+
+    pub func find(uid: u32) -> usize?:
+        var low: usize = 0
+        var high = self.uids.length()
+        while low < high:
+            let middle = (low + high) // 2
+            let found = self.uids.at(middle)
+            if found == uid:
+                return middle
+            if found < uid:
+                low = middle + 1
+            else:
+                high = middle
+        return none
+
+    pub func last_uid() -> u32:
+        return self.uids.at(self.uids.length() - 1) if self.uids.length() > 0 else 0
+
+    ## How many messages are not marked seen.
+    pub func unseen() -> u32:
+        var count: u32 = 0
+        for bits in self.flags.view():
+            if (bits & 1) == 0:
+                count += 1
+        return count
+
+    ## Record `uid` with `flags`, keeping the UIDs sorted.
+    pub mutating func put(uid: u32, flags: u16) -> !:
+        if let at = self.find(uid):
+            self.flags.set(at, flags)
+            return
+        try self.uids.add(uid)
+        try self.flags.add(flags)
+        var at = self.uids.length() - 1
+        while at > 0 and self.uids.at(at - 1) > uid:
+            self.uids.set(at, self.uids.at(at - 1))
+            self.flags.set(at, self.flags.at(at - 1))
+            at -= 1
+        self.uids.set(at, uid)
+        self.flags.set(at, flags)
+
+    pub mutating func remove(uid: u32):
+        if let at = self.find(uid):
+            self.uids.remove(at)
+            self.flags.remove(at)
+
+    pub mutating func clear():
+        self.uids.clear()
+        self.flags.clear()
+
+    pub mutating func close():
+        self.uids.close()
+        self.flags.close()
+
+func ledger_row(context: void*?, row: const prism.RowView*) -> !:
+    let ledger = (Ledger*)(context else error(prism.invalid, "no ledger"))
+    let uid = row.integer("uid") else return
+    try ledger.put((u32)uid, (u16)(row.integer("flags") else 0))
+
+## The ledger of folder identity `identity`: empty when the store has none yet.
+pub func read_ledger(store: prism.Store*, identity: str) -> Ledger!:
+    var ledger: Ledger
+    errdefer ledger.close()
+    if not try store.mounted(identity):
+        return ledger
+    let snap = try store.snapshot_identity(identity)
+    defer snap.release()
+    let session = try snap.get()
+    if try session.contains("/state"):
+        ledger.uid_validity = (u32)(try integer_of(session, "/state", "uid_validity"))
+        ledger.uid_next = (u32)(try integer_of(session, "/state", "uid_next"))
+        ledger.modseq = (u64)(try integer_of(session, "/state", "modseq"))
+    try session.each_child("/", ledger_row, &ledger)
+    return ledger
+
+func integer_of(session: prism.Session*, path: str, name: str) -> i64!:
+    let value = try session.get(path, name)
+    defer value.release()
+    return try value.value().integer_at()
+
+## Rows read from a folder identity, their text kept in `pool`.
+pub struct Rows:
+    pub var rows: Records[Row]
+    pub var pool: Pool
+
+    pub mutating func close():
+        self.rows.close()
+        self.pool.close()
+
+func collect_row(context: void*?, view: const prism.RowView*) -> !:
+    let into = (Rows*)(context else error(prism.invalid, "no rows"))
+    let uid = view.integer("uid") else return
+    try into.rows.add(Row(uid = (u32)uid, flags = (u16)(view.integer("flags") else 0), date = view.integer("date") else 0,
+                          size = (u32)(view.integer("size") else 0), attachment = view.boolean("attachment") else false,
+                          sender = try into.pool.keep_text((view.text("sender") else "").bytes),
+                          subject = try into.pool.keep_text((view.text("subject") else "").bytes),
+                          message_id = try into.pool.keep_text((view.text("message_id") else "").bytes),
+                          in_reply_to = try into.pool.keep_text((view.text("in_reply_to") else "").bytes),
+                          preview = try into.pool.keep_text((view.text("preview") else "").bytes)))
+
+## Every message of folder identity `identity`, in the order they were added.
+pub func read_rows(store: prism.Store*, identity: str) -> Rows!:
+    var out: Rows
+    errdefer out.close()
+    if not try store.mounted(identity):
+        return out
+    let snap = try store.snapshot_identity(identity)
+    defer snap.release()
+    try (try snap.get()).each_child("/", collect_row, &out)
+    return out
+
+## Folders read from an account identity, their text kept in `pool`.
+pub struct Folders:
+    pub var folders: Records[Folder]
+    var orders: Records[i64]
+    pub var pool: Pool
+
+    pub mutating func close():
+        self.folders.close()
+        self.orders.close()
+        self.pool.close()
+
+func collect_folder(context: void*?, view: const prism.RowView*) -> !:
+    let into = (Folders*)(context else error(prism.invalid, "no folders"))
+    let path = view.path()
+    if path.length < 3:
+        return
+    let order = view.integer("order") else 0
+    let folder = Folder(path = try into.pool.keep_text((view.text("path") else "").bytes),
+                        name = try into.pool.keep_text((view.text("name") else "").bytes),
+                        delimiter = (u8)(view.integer("delimiter") else 0), flags = (u32)(view.integer("flags") else 0),
+                        key = try into.pool.keep_text(path.bytes[2..]), total = (u32)(view.integer("total") else 0),
+                        unseen = (u32)(view.integer("unseen") else 0))
+    # Keep the listing in the engine's order: INBOX first, then as the server lists.
+    try into.folders.add(folder)
+    try into.orders.add(order)
+    var at = into.folders.length() - 1
+    while at > 0 and into.orders.at(at - 1) > order:
+        into.folders.set(at, into.folders.at(at - 1))
+        into.orders.set(at, into.orders.at(at - 1))
+        at -= 1
+    into.folders.set(at, folder)
+    into.orders.set(at, order)
+
+## The folders of account identity `account`, in listing order.
+pub func read_folders(store: prism.Store*, account: str) -> Folders!:
+    var out: Folders
+    errdefer out.close()
+    if not try store.mounted(account):
+        return out
+    let snap = try store.snapshot_identity(account)
+    defer snap.release()
+    try (try snap.get()).each_child("/", collect_folder, &out)
+    return out
+
+## Empty account `account`'s identity and every folder identity it lists: Accounts ›
+## Remove. The identities stay in the catalog, empty; prism has no unmount.
+pub func forget_account(held: interop.Reference[prism.Store], account: str) -> !:
+    let store = try held.get()
+    var listed = try read_folders(store, account)
+    defer listed.close()
+    var identity: Buffer
+    defer identity.close()
+    for folder in listed.folders.view():
+        try folder_identity(account, folder.key.bytes, &identity)
+        try clear(store, identity.text_view())
+    try clear(store, account)
+
+func clear(store: prism.Store*, identity: str) -> !:
+    if not try store.mounted(identity):
+        return
+    var batch = try Batch.begin(store, identity)
+    defer batch.close()
+    let none_kept: str[1] = [""]
+    try batch.remove_others(none_kept[..<0])
+    try batch.commit()
+    try bake(store, identity)

@@ -1,17 +1,20 @@
 ## What the window reads from the store: a folder list and a folder's message index,
-## each loaded whole into an object Luce holds, with one accessor per column. Reading
-## them in Base keeps a 50,000-message folder quick to open.
-import c
+## each read whole from a prism snapshot (mail_db) into an object Luce holds, with one
+## accessor per column. Reading them in Base keeps a 50,000-message folder quick to open.
 from luce_std import files
 import interop
 import memory
-from engine_text import Buffer, Pool, Records, Fields, equal
-from mail_store import Index, Row, Folder
+from luce_prism import prism
+from engine_text import Buffer, Records
+from mail_store import Row, Folder
 from mail_threads import Threads, thread
+import mail_db
 
-## A folder's messages, as the store has them, sorted by UID.
+## A folder's messages, as the store has them.
 pub struct MessageIndex:
-    var index: Index
+    var rows: mail_db.Rows
+    ## Positions in UID order, for `position`.
+    var by_uid: Records[u32]
     ## Positions newest first: by date, then by UID.
     var order: Records[u32]
     ## The messages grouped into conversations.
@@ -19,12 +22,12 @@ pub struct MessageIndex:
 
     ## How many messages there are.
     pub func count() -> i64:
-        return (i64)self.index.rows.length()
+        return (i64)self.rows.rows.length()
 
     func row(at: i64) -> Row:
-        if at < 0 or at >= (i64)self.index.rows.length():
+        if at < 0 or at >= (i64)self.rows.rows.length():
             trap("no message at that position in the index")
-        return self.index.rows.at((usize)at)
+        return self.rows.rows.at((usize)at)
 
     pub func uid(at: i64) -> i64:
         return (i64)self.row(at).uid
@@ -51,10 +54,19 @@ pub struct MessageIndex:
 
     ## The position of the message with UID `uid`, or -1.
     pub func position(uid: i64) -> i64:
-        if uid < 0 or uid > 0xFFFFFFFF:
-            return -1
-        let at = self.index.find((u32)uid) else return -1
-        return (i64)at
+        var low: usize = 0
+        var high = self.by_uid.length()
+        while low < high:
+            let middle = (low + high) // 2
+            let at = self.by_uid.at(middle)
+            let found = (i64)self.rows.rows.at((usize)at).uid
+            if found == uid:
+                return (i64)at
+            if found < uid:
+                low = middle + 1
+            else:
+                high = middle
+        return -1
 
     ## The position of the `nth` newest message.
     pub func newest(nth: i64) -> i64:
@@ -62,13 +74,19 @@ pub struct MessageIndex:
             trap("no message at that place in the order")
         return (i64)self.order.at((usize)nth)
 
-    ## Order the positions newest first (a merge sort: stable, and fast on the mostly
-    ## sorted orders mailboxes have).
+    ## Fill the UID and newest-first orders.
     mutating func sort() -> !:
-        let count = self.index.rows.length()
-        self.order.clear()
+        let count = self.rows.rows.length()
         for at in 0..<count:
+            try self.by_uid.add((u32)at)
             try self.order.add((u32)at)
+        try self.merge_sort(&self.by_uid, true)
+        try self.merge_sort(&self.order, false)
+
+    ## Sort `positions` by UID (`by_uid`), else newest first; a stable merge sort, fast
+    ## on the mostly sorted orders mailboxes have.
+    mutating func merge_sort(positions: Records[u32]*, by_uid: bool) -> !:
+        let count = positions.length()
         if count < 2:
             return
         let scratch = try alloc u32[count] in memory.heap
@@ -83,23 +101,30 @@ pub struct MessageIndex:
                 var right = middle
                 var out = start
                 while out < end:
-                    let take_left = right >= end or (left < middle and not self.newer(self.order.at(right), self.order.at(left)))
+                    var take_left = right >= end
+                    if not take_left and left < middle:
+                        let a = positions.at(left)
+                        let b = positions.at(right)
+                        take_left = not (self.uid_before(b, a) if by_uid else self.newer(b, a))
                     if take_left:
-                        scratch[out] = self.order.at(left)
+                        scratch[out] = positions.at(left)
                         left += 1
                     else:
-                        scratch[out] = self.order.at(right)
+                        scratch[out] = positions.at(right)
                         right += 1
                     out += 1
                 start = end
             for at in 0..<count:
-                self.order.set(at, scratch[at])
+                positions.set(at, scratch[at])
             width *= 2
+
+    func uid_before(a: u32, b: u32) -> bool:
+        return self.rows.rows.at((usize)a).uid < self.rows.rows.at((usize)b).uid
 
     ## Whether the row at `a` is newer than the row at `b`.
     func newer(a: u32, b: u32) -> bool:
-        let first = self.index.rows.at((usize)a)
-        let second = self.index.rows.at((usize)b)
+        let first = self.rows.rows.at((usize)a)
+        let second = self.rows.rows.at((usize)b)
         if first.date != second.date:
             return first.date > second.date
         return first.uid > second.uid
@@ -131,7 +156,7 @@ pub struct MessageIndex:
     pub func thread_any(nth: i64, bit: i64, wanted: bool) -> bool:
         let group = self.checked_thread(nth)
         for member in 0..<self.threads.size(group):
-            let flags = (i64)self.index.rows.at((usize)self.threads.member(group, member)).flags
+            let flags = (i64)self.rows.rows.at((usize)self.threads.member(group, member)).flags
             if ((flags & bit) == bit) == wanted:
                 return true
         return false
@@ -140,40 +165,37 @@ pub struct MessageIndex:
     pub func thread_attachment(nth: i64) -> bool:
         let group = self.checked_thread(nth)
         for member in 0..<self.threads.size(group):
-            if self.index.rows.at((usize)self.threads.member(group, member)).attachment:
+            if self.rows.rows.at((usize)self.threads.member(group, member)).attachment:
                 return true
         return false
 
     pub mutating func close():
-        self.index.close()
+        self.rows.close()
+        self.by_uid.close()
         self.order.close()
         self.threads.close()
 
 pub let message_index_type: interop.Type[MessageIndex] = interop.Type[MessageIndex]("Message index", MessageIndex.close, closeable = true)
 
-## Read the index file at `path`; empty when there is none.
-pub func read_index(path: str) -> interop.Reference[MessageIndex]!:
-    var name: Buffer
-    defer name.close()
-    try name.text(path)
-    let native = try new MessageIndex(index = try Index.load(try name.terminated())) in memory.heap
+## The messages of folder identity `identity` in `store`; empty when it has none yet.
+pub func read_index(store: interop.Reference[prism.Store], identity: str) -> interop.Reference[MessageIndex]!:
+    let native = try new MessageIndex(rows = try mail_db.read_rows(try store.get(), identity)) in memory.heap
     errdefer free(native) in memory.heap
     try native.sort()
-    native.threads = try thread(&native.index)
+    native.threads = try thread(&native.rows.rows)
     return try interop.Reference[MessageIndex].adopt(native, message_index_type)
 
 ## The folders of one account, as the engine listed them.
 pub struct FolderList:
-    var folders: Records[Folder]
-    var text: Pool
+    var listed: mail_db.Folders
 
     pub func count() -> i64:
-        return (i64)self.folders.length()
+        return (i64)self.listed.folders.length()
 
     func folder(at: i64) -> Folder:
-        if at < 0 or at >= (i64)self.folders.length():
+        if at < 0 or at >= (i64)self.listed.folders.length():
             trap("no folder at that position")
-        return self.folders.at((usize)at)
+        return self.listed.folders.at((usize)at)
 
     ## The server's name for folder `at`, used in commands.
     pub func path(at: i64) -> str:
@@ -220,54 +242,14 @@ pub struct FolderList:
         return (i64)self.folder(at).unseen
 
     pub mutating func close():
-        self.folders.close()
-        self.text.close()
+        self.listed.close()
 
 pub let folder_list_type: interop.Type[FolderList] = interop.Type[FolderList]("Folder list", FolderList.close, closeable = true)
 
-## Read the folders file at `path`; empty when there is none.
-pub func read_folders(path: str) -> interop.Reference[FolderList]!:
-    let native = try new FolderList in memory.heap
-    errdefer free(native) in memory.heap
-    var name: Buffer
-    defer name.close()
-    try name.text(path)
-    let file = try name.terminated()
-    if files.exists(file):
-        let data: u8[]? = files.read(file) catch failure:
-            recover none
-        if let bytes = data:
-            defer free(bytes)
-            try read_folder_lines(bytes, native)
+## The folders of account `account` in `store`; empty when it has none yet.
+pub func read_folders(store: interop.Reference[prism.Store], account: str) -> interop.Reference[FolderList]!:
+    let native = try new FolderList(listed = try mail_db.read_folders(try store.get(), account)) in memory.heap
     return try interop.Reference[FolderList].adopt(native, folder_list_type)
-
-func read_folder_lines(bytes: const u8[], list: FolderList*) -> !:
-    var scratch: Buffer
-    defer scratch.close()
-    var start: usize = 0
-    var first = true
-    for at in 0..<bytes.length + 1:
-        if at < bytes.length and bytes[at] != '\n':
-            continue
-        let line = bytes[start..<at]
-        start = at + 1
-        if line.length == 0:
-            continue
-        if first:
-            first = false
-            continue
-        let fields = Fields.split(line)
-        if fields.length() < 7:
-            continue
-        scratch.clear()
-        try fields.unescape(0, &scratch)
-        let path = try list.text.keep_text(scratch.view())
-        scratch.clear()
-        try fields.unescape(1, &scratch)
-        let name = try list.text.keep_text(scratch.view())
-        let key = try list.text.keep_text(fields.raw(4))
-        try list.folders.add(Folder(path = path, name = name, delimiter = (u8)fields.number(2), flags = (u32)fields.number(3),
-                                    key = key, total = (u32)fields.number(5), unseen = (u32)fields.number(6)))
 
 ## Whether a file or directory exists at `path`.
 pub func exists(path: str) -> bool:

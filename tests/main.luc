@@ -8,6 +8,9 @@ from luce_std import files, paths
 import sources_tests
 import composer_tests
 import list_tests
+import fixtures
+import db_tests
+from luce_prism import prism
 import sidebar_tests
 
 func check(condition: bool, what: str):
@@ -61,10 +64,11 @@ func accounts_without_keychain(directory: str) -> unit!:
     check(store.warning != "", "the refused password is reported")
     check(store.load().length == 1, "the account is saved anyway")
 
-func index_reading(directory: str) -> unit!:
-    let path = paths.join(directory, "index")
-    files.write_text(path, "luced-message index 1\t7\t12\t0\n3\t1\t1000\t10\t0\tAlice\tOld\tid3\t\t\n5\t0\t3000\t20\t1\tBob\tNew\\tTabbed\tid5\tid3\tHello\n9\t4\t2000\t30\t0\tCarol\tMiddle\tid9\t\tA\\nB\n")
-    let index = mail_index.read_index(path)
+func index_reading() -> unit!:
+    let store = prism.Store.memory()
+    fixtures.folder_with(store, "acct.k1", ["3\t1\t1000\t10\t0\tAlice\tOld\tid3\t\t", "5\t0\t3000\t20\t1\tBob\tNew\\tTabbed\tid5\tid3\tHello",
+                                           "9\t4\t2000\t30\t0\tCarol\tMiddle\tid9\t\tA\\nB"])
+    let index = mail_index.read_index(store, "acct.k1")
     check(index.count() == 3, "three rows")
     check(index.uid(index.newest(0)) == 5 and index.uid(index.newest(1)) == 9 and index.uid(index.newest(2)) == 3, "newest first by date")
     let bob = index.position(5)
@@ -72,24 +76,23 @@ func index_reading(directory: str) -> unit!:
     check(index.preview(index.position(9)) == "A\nB", "newlines unescaped")
     check(mail_index.has(index.flags(index.position(9)), 4) and not mail_index.has(index.flags(bob), 1), "flag bits")
     check(index.position(4) == -1, "a missing UID")
-    let none_here = mail_index.read_index(paths.join(directory, "missing"))
-    check(none_here.count() == 0, "no file reads as empty")
-    let folders_path = paths.join(directory, "folders")
-    files.write_text(folders_path, "luced-message folders 1\nINBOX\tINBOX\t47\t0\tk1\t5\t2\nArchive/2026\tArchive/2026\t47\t512\tk2\t9\t0\n")
-    let folders = mail_index.read_folders(folders_path)
+    let none_here = mail_index.read_index(store, "acct.missing")
+    check(none_here.count() == 0, "a folder never synced reads as empty")
+    fixtures.account_with(store, "acct", ["INBOX\tINBOX\t47\t0\tk1\t5\t2", "Archive/2026\tArchive/2026\t47\t512\tk2\t9\t0"])
+    let folders = mail_index.read_folders(store, "acct")
     check(folders.count() == 2 and folders.unseen(0) == 2, "folders read")
     check(folders.depth(1) == 1 and folders.leaf(1) == "2026" and folders.key(1) == "k2", "depth and leaf")
 
-func conversations(directory: str) -> unit!:
-    let path = paths.join(directory, "threads")
+func conversations() -> unit!:
     # uid flags date size attachment sender subject message-id in-reply-to preview
     let rows = ["1\t1\t100\t1\t0\tCarol\tPlan\tp1\t\t", "2\t0\t200\t1\t0\tDave\tRe: Plan\tp2\tp1\t",
                 "3\t1\t150\t1\t1\tBob\tLunch\tl1\t\t", "4\t5\t300\t1\t0\tEve\tRE: Re: Plan\tp3\tp2\t",
                 "5\t1\t50\t1\t0\tAnn\tRe: Old topic\to2\tgone\t", "6\t1\t60\t1\t0\tAl\tRe: Old topic\to3\tgone\t",
                 "7\t1\t70\t1\t0\tZed\tHello\th1\t\t", "8\t1\t80\t1\t0\tYan\tHello\th2\t\t",
                 "9\t1\t400\t1\t0\tKim\tFwd: Lunch\tf1\t\t"]
-    files.write_text(path, "luced-message index 1\t1\t10\t0\n" + rows.join("\n") + "\n")
-    let index = mail_index.read_index(path)
+    let store = prism.Store.memory()
+    fixtures.folder_with(store, "acct.k1", rows)
+    let index = mail_index.read_index(store, "acct.k1")
     # Lunch+Fwd (newest 400), Plan chain (300), Hello h2 (80), Hello h1 (70), Old topic pair (60).
     check(index.thread_count() == 5, f"five conversations, got {index.thread_count()}")
     check(index.uid(index.thread_member(0, 0)) == 9 and index.thread_size(0) == 2, "a forward joins its subject")
@@ -115,11 +118,12 @@ pub func main(arguments: list[str]) -> int!:
     accounts_round_trip(directory)
     accounts_without_keychain(directory)
     store_removal(directory)
-    index_reading(directory)
-    conversations(directory)
+    index_reading()
+    conversations()
+    db_tests.run(prism.Store.memory())
     sources_tests.run()
     composer_tests.run()
-    list_tests.run(directory)
+    list_tests.run()
     sidebar_tests.run()
     check(clock.list_date(0) == "", "no date")
     print("PASS luced-message")

@@ -3,8 +3,8 @@
 ## headers, everyone's flags, expunges), prefetches the newest INBOX bodies, then
 ## waits in IDLE on INBOX until the server has news or the window has a command.
 ## Commands (fetch a body, change flags, move, send) run between those steps. Every
-## change is written to the store first and then announced as an event, so the window
-## only ever reads files.
+## change is written to the store (mail_db) first and then announced as an event, so the
+## window only ever reads the store.
 ##
 ## Commands, tab-separated:   sync | body PATH UID | flags PATH UIDS ADD BITS |
 ##                            move PATH UIDS TARGET | send FILE FROM RECIPIENTS | draft FILE |
@@ -27,9 +27,11 @@ from luce_smtp import smtp
 import thread
 import time
 from luce_tls import stream as tls_stream
+from luce_prism import prism
 from engine_text import Buffer, Pool, Records, Fields, equal
-from mail_store import Index, Row, Folder, save_folders, put_key, ensure_path
+from mail_store import Row, Folder, put_key, ensure_path
 from mail_queue import Mailroom
+import mail_db
 
 ## The headers a message list needs, fetched for every new message.
 let summary_fields: str = "DATE FROM SUBJECT MESSAGE-ID IN-REPLY-TO CONTENT-TYPE"

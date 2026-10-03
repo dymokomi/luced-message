@@ -26,7 +26,7 @@ extend Engine:
         self.post("folders")
         self.post("status", b"")
 
-    ## Learn the folders, INBOX first, and write the folders file.
+    ## Learn the folders, INBOX first, and store the list.
     mutating func list_folders() -> !:
         let mailboxes = try self.session.list()
         self.folders.clear()
@@ -46,14 +46,25 @@ extend Engine:
         try self.save_folders()
         self.post("folders")
 
-    ## Write the folders file.
+    ## Store the folder list in the account's identity, dropping folders that are gone.
     mutating func save_folders() -> !:
-        var path: Buffer
-        defer path.close()
-        try self.account_directory(&path)
-        try ensure_path(path.text_view())
-        try path.put(b"/folders")
-        try save_folders(try path.terminated(), self.folders.view())
+        var batch = try mail_db.Batch.begin(self.store, self.account.id)
+        defer batch.close()
+        var kept: Pool
+        defer kept.close()
+        var paths: Records[str]
+        defer paths.close()
+        var element: Buffer
+        defer element.close()
+        for order in 0..<self.folders.length():
+            let folder = self.folders.at(order)
+            try batch.put_folder(&folder, order)
+            element.clear()
+            try element.put(b"/f")
+            try element.text(folder.key)
+            try paths.add(try kept.keep_text(element.view()))
+        try batch.remove_others(paths.view())
+        try batch.commit()
 
     ## Bring folder number `at` up to date.
     mutating func sync_folder(at: usize) -> !:
@@ -63,126 +74,131 @@ extend Engine:
         defer directory.close()
         try self.folder_directory(path, &directory)
         try ensure_path(directory.text_view())
-        var index_path: Buffer
-        defer index_path.close()
-        try self.folder_file(path, b"index", &index_path)
-        var index = try Index.load(try index_path.terminated())
-        defer index.close()
+        var identity: Buffer
+        defer identity.close()
+        try mail_db.folder_identity(self.account.id, folder.key.bytes, &identity)
+        var ledger = try mail_db.read_ledger(self.store, identity.text_view())
+        defer ledger.close()
         let state = try self.select(path)
-        if index.uid_validity != state.uid_validity:
-            index.clear()
-            index.uid_validity = state.uid_validity
-        # Flags of the messages held, and which are gone.
-        if index.rows.length() > 0 and state.exists > 0:
-            try self.refresh_flags(&index)
-        elif state.exists == 0 and index.rows.length() > 0:
-            index.clear()
-            index.uid_validity = state.uid_validity
+        var batch = try mail_db.Batch.begin(self.store, identity.text_view())
+        defer batch.close()
+        var changed = false
+        if ledger.uid_validity != state.uid_validity or (state.exists == 0 and ledger.uids.length() > 0):
+            # A new UIDVALIDITY makes every held UID stale; an empty folder holds nothing.
+            for uid in ledger.uids.view():
+                try batch.remove(uid)
+            ledger.clear()
+        elif ledger.uids.length() > 0:
+            # Flags of the messages held, and which are gone.
+            try self.refresh_flags(&ledger, &batch)
         # New messages: their headers, newest batches first.
-        if state.exists > 0 and (state.uid_next == 0 or state.uid_next > index.last_uid() + 1):
-            try self.fetch_new(path, &index, &index_path)
-        index.uid_next = state.uid_next
-        if index.changed:
-            try index.save(try index_path.terminated())
+        if state.exists > 0 and (state.uid_next == 0 or state.uid_next > ledger.last_uid() + 1):
+            changed = try self.fetch_new(path, &ledger, &batch) or changed
+        if ledger.uid_validity != state.uid_validity or ledger.uid_next != state.uid_next:
+            ledger.uid_validity = state.uid_validity
+            ledger.uid_next = state.uid_next
+            try batch.put_state(state.uid_validity, state.uid_next, ledger.modseq)
+        if imap.same(path, b"INBOX"):
+            try self.prefetch(path, &ledger, &batch)
+        changed = batch.count > 0 or changed
+        try batch.commit()
+        if changed:
+            try mail_db.bake(self.store, identity.text_view())
             self.post("folder", path)
         var updated = folder
-        updated.total = (u32)index.rows.length()
-        updated.unseen = index.unseen()
+        updated.total = (u32)ledger.uids.length()
+        updated.unseen = ledger.unseen()
         self.folders.set(at, updated)
-        if imap.same(path, b"INBOX"):
-            try self.prefetch(path, &index, &index_path)
 
-    ## Update every held row's flags and drop the rows the server no longer has.
-    mutating func refresh_flags(index: Index*) -> !:
+    ## Update every held message's flags and drop the ones the server no longer has.
+    mutating func refresh_flags(ledger: mail_db.Ledger*, batch: mail_db.Batch*) -> !:
         var set: Buffer
         defer set.close()
         try set.put(b"1:")
-        try set.number((i64)index.last_uid())
+        try set.number((i64)ledger.last_uid())
         let records = try self.session.fetch(set.text_view(), "(UID FLAGS)")
         var seen: Records[bool]
         defer seen.close()
-        while seen.length() < index.rows.length():
+        while seen.length() < ledger.uids.length():
             try seen.add(false)
         for record in records:
-            if let at = index.find(record.uid):
+            if let at = ledger.find(record.uid):
                 seen.set(at, true)
-                var row = index.rows.at(at)
-                if record.has_flags and row.flags != (u16)record.flags:
-                    row.flags = (u16)record.flags
-                    index.rows.set(at, row)
-                    index.changed = true
-        var at = index.rows.length()
+                if record.has_flags and ledger.flags.at(at) != (u16)record.flags:
+                    ledger.flags.set(at, (u16)record.flags)
+                    try batch.set_flags(record.uid, (u16)record.flags)
+        var at = ledger.uids.length()
         while at > 0:
             at -= 1
             if not seen.at(at):
-                index.rows.remove(at)
-                index.changed = true
+                try batch.remove(ledger.uids.at(at))
+                ledger.uids.remove(at)
+                ledger.flags.remove(at)
 
-    ## Fetch the headers of messages newer than the index holds.
-    mutating func fetch_new(path: const u8[], index: Index*, index_path: Buffer*) -> !:
+    ## Fetch the headers of messages newer than the folder holds, committing each batch
+    ## so the window shows them as they come. Whether any arrived.
+    mutating func fetch_new(path: const u8[], ledger: mail_db.Ledger*, batch: mail_db.Batch*) -> bool!:
         var criteria: Buffer
         defer criteria.close()
         try criteria.put(b"UID ")
-        try criteria.number((i64)index.last_uid() + 1)
+        try criteria.number((i64)ledger.last_uid() + 1)
         try criteria.put(b":*")
         let found = try self.session.search(criteria.text_view())
         var uids: Records[u32]
         defer uids.close()
         for uid in found:
-            if uid > index.last_uid():
+            if uid > ledger.last_uid():
                 try uids.add(uid)
         var end = uids.length()
+        let any = end > 0
         while end > 0:
             let start = end - batch_size if end > batch_size else 0
             var set: imap.Bytes
             defer set.close()
             try imap.write_set(uids.view()[start..<end], &set)
             let records = try self.session.fetch_headers((str)set.view(), summary_fields)
+            var text: Pool
+            defer text.close()
             for record in records:
-                try index.put(try summarize(&record, index))
-            try index.save(try index_path.terminated())
+                let row = try summarize(&record, &text)
+                try batch.put_row(&row)
+                try ledger.put(row.uid, row.flags)
+            try batch.flush()
             self.post("folder", path)
             end = start
             if self.room.has_command() or self.room.stopped():
                 # The rest arrives on the next sync; the window's command goes first.
                 self.wants_full_sync = true
-                return
+                return any
+        return any
 
     ## Fetch INBOX's newest bodies that are not in the store yet.
-    mutating func prefetch(path: const u8[], index: Index*, index_path: Buffer*) -> !:
+    mutating func prefetch(path: const u8[], ledger: const mail_db.Ledger*, batch: mail_db.Batch*) -> !:
         var fetched: usize = 0
-        var at = index.rows.length()
+        var at = ledger.uids.length()
         var file: Buffer
         defer file.close()
         while at > 0 and fetched < prefetch_count:
             at -= 1
             if self.room.has_command() or self.room.stopped():
                 break
-            let uid = index.rows.at(at).uid
+            let uid = ledger.uids.at(at)
             try self.message_file(path, uid, &file)
             if files.exists(try file.terminated()):
                 continue
-            try self.store_body(path, uid, index, &file)
+            try self.store_body(uid, batch, &file)
             fetched += 1
-        if index.changed:
-            try index.save(try index_path.terminated())
-            self.post("folder", path)
 
-    ## Fetch message `uid` of the selected folder `path` into `file`, and fill its row's
-    ## preview from it.
-    mutating func store_body(path: const u8[], uid: u32, index: Index*, file: Buffer*) -> !:
+    ## Fetch message `uid` of the selected folder into `file`, and write the preview and
+    ## attachment mark its row shows.
+    mutating func store_body(uid: u32, batch: mail_db.Batch*, file: Buffer*) -> !:
         let data = try self.session.fetch_message(uid)
         if data.length == 0:
             return
         try files.write_atomic(try file.terminated(), data)
-        if let at = index.find(uid):
-            var message = try mime.Message.read(data)
-            defer message.close()
-            var row = index.rows.at(at)
-            row.preview = try index.keep(try message.preview().bytes)
-            row.attachment = try message.attachment_count() > 0
-            index.rows.set(at, row)
-            index.changed = true
+        var message = try mime.Message.read(data)
+        defer message.close()
+        try batch.set_body_summary(uid, try message.preview(), try message.attachment_count() > 0)
 
     ## Fetch message `uid` of folder `path` for the window, which waits for it.
     mutating func fetch_body(path: const u8[], uid: u32) -> !:
@@ -191,31 +207,32 @@ extend Engine:
         try self.message_file(path, uid, &file)
         if not files.exists(try file.terminated()):
             discard(try self.select(path))
-            var index_path: Buffer
-            defer index_path.close()
-            try self.folder_file(path, b"index", &index_path)
-            var index = try Index.load(try index_path.terminated())
-            defer index.close()
-            try self.store_body(path, uid, &index, &file)
-            if index.changed:
-                try index.save(try index_path.terminated())
+            var identity: Buffer
+            defer identity.close()
+            try self.folder_identity_of(path, &identity)
+            var batch = try mail_db.Batch.begin(self.store, identity.text_view())
+            defer batch.close()
+            try self.store_body(uid, &batch, &file)
+            let changed = batch.count > 0
+            try batch.commit()
+            if changed:
                 self.post("folder", path)
         var number: Buffer
         defer number.close()
         try number.number((i64)uid)
         self.post("body", path, number.view())
 
-## The row a message list needs from a fetched header.
-func summarize(record: const imap.Fetched*, index: Index*) -> Row!:
+## The row a message list needs from a fetched header, its text kept in `text`.
+func summarize(record: const imap.Fetched*, text: Pool*) -> Row!:
     var message = try mime.Message.read(record.header)
     defer message.close()
     let sender = try message.address_line("From", short = true)
     let date = message.date_seconds()
     return Row(uid = record.uid, flags = (u16)record.flags, date = date if date != 0 else record.internal_date,
                size = (u32)record.size, attachment = try message.part_type(0) == "multipart/mixed",
-               sender = try index.keep(sender.bytes), subject = try index.keep((try message.subject()).bytes),
-               message_id = try index.keep((try message.message_id()).bytes),
-               in_reply_to = try index.keep((try message.in_reply_to()).bytes), preview = "")
+               sender = try text.keep_text(sender.bytes), subject = try text.keep_text((try message.subject()).bytes),
+               message_id = try text.keep_text((try message.message_id()).bytes),
+               in_reply_to = try text.keep_text((try message.in_reply_to()).bytes), preview = "")
 
 ## The UIDs of sequence set `text` (`4:7,9`) onto `out`.
 func read_set(text: const u8[], out: Records[u32]*) -> !:

@@ -5,6 +5,7 @@
 import interop
 import memory
 import thread
+from luce_prism import prism
 from engine_text import Buffer
 from mail_queue import Mailroom
 from mail_sync import Engine
@@ -21,6 +22,8 @@ func serve(context: void*?):
 ## A running mail engine for one account.
 pub struct MailService:
     var room: Mailroom*?
+    ## Keeps the store the engine borrows open until the engine has stopped.
+    var store: interop.Reference[prism.Store]?
     var handle: thread.Handle
     ## The last poll's events, kept until the next poll.
     var polled: Buffer
@@ -47,17 +50,21 @@ pub struct MailService:
         free(room) in memory.heap
         self.room = none
         self.polled.close()
+        if let held = self.store:
+            held.release()
+        self.store = none
 
 ## The interop type of a `MailService`.
 pub let mail_service_type: interop.Type[MailService] = interop.Type[MailService]("Mail service", MailService.close, closeable = true, main_thread = true)
 
-## Start a mail engine for the account in configuration line `config`:
-## id, store root, IMAP host, port, security, user, password, SMTP host, port,
-## security, user, password, each a tab-separated field.
-pub func start_service(config: str) -> interop.Reference[MailService]!:
+## Start a mail engine for the account in configuration line `config` (id, store root,
+## IMAP host, port, security, user, password, SMTP host, port, security, user,
+## password, each a tab-separated field), writing to the mail database `store`.
+pub func start_service(config: str, store: interop.Reference[prism.Store]) -> interop.Reference[MailService]!:
     let room = try new Mailroom in memory.heap
     errdefer free(room) in memory.heap
     try room.config.put(config.bytes)
+    room.store = try store.get()
     let handle = try thread.spawn(serve, (void*)room, name = "luced-message mail")
-    let service = try new MailService(room = room, handle = handle) in memory.heap
+    let service = try new MailService(room = room, handle = handle, store = store.clone()) in memory.heap
     return try interop.Reference[MailService].adopt(service, mail_service_type)

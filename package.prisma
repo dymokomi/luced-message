@@ -19,6 +19,12 @@ def package "luced-message" {
         str path = "../luce-ui"
     }
 
+    def dependency "luce-prism" {
+        str owner = "dymokomi"
+        str version = "^0.3.0"
+        str path = "../luce-prism"
+    }
+
     def dependency "luce-mime" {
         str owner = "dymokomi"
         str version = "^0.2.0"

@@ -1,0 +1,77 @@
+## mail_db as the engine uses it: batches of rows, flags, removals and mailbox state;
+## the ledger and rows read back; folders listed in order; an account forgotten.
+import interop
+from luce_prism import prism
+import mail_db
+from mail_store import Row, Folder
+
+func message(uid: u32, flags: u16, date: i64, subject: str) -> Row:
+    return Row(uid = uid, flags = flags, date = date, size = 10, attachment = false, sender = "Ann", subject = subject,
+               message_id = "", in_reply_to = "", preview = "")
+
+func folder(path: str, key: str) -> Folder:
+    return Folder(path = path, name = path, delimiter = 47, flags = 0, key = key, total = 0, unseen = 0)
+
+pub func run(held: interop.Reference[prism.Store]) -> !:
+    let store = try held.get()
+    var batch = try mail_db.Batch.begin(store, "acct.k1")
+    defer batch.close()
+    for row in [message(5, 0, 300, "New"), message(3, 1, 100, "Old"), message(9, 4, 200, "Middle")]:
+        try batch.put_row(&row)
+    try batch.put_state(7, 12, 0)
+    try batch.commit()
+    var ledger = try mail_db.read_ledger(store, "acct.k1")
+    defer ledger.close()
+    assert(ledger.uid_validity == 7 and ledger.uid_next == 12 and ledger.uids.length() == 3)
+    assert(ledger.last_uid() == 9 and ledger.unseen() == 2)
+    assert(ledger.flags.at(ledger.find(9) else 99) == 4)
+    # Flags, a removal and a body's summary, over two commits; a missing UID is ignored.
+    var second = try mail_db.Batch.begin(store, "acct.k1")
+    defer second.close()
+    try second.set_flags(5, 1)
+    try second.flush()
+    try second.remove(3)
+    try second.set_body_summary(9, "Hi there", true)
+    try second.set_body_summary(42, "nobody", true)
+    try second.commit()
+    try mail_db.bake(store, "acct.k1")
+    var rows = try mail_db.read_rows(store, "acct.k1")
+    defer rows.close()
+    assert(rows.rows.length() == 2)
+    for row in rows.rows.view():
+        assert(row.uid != 3)
+        if row.uid == 5:
+            assert(row.flags == 1 and row.subject == "New" and row.date == 300)
+        if row.uid == 9:
+            assert(row.preview == "Hi there" and row.attachment and row.sender == "Ann")
+    # Folders keep the listing's order, and a relisting drops the ones gone.
+    var folders = try mail_db.Batch.begin(store, "acct")
+    defer folders.close()
+    let inbox = folder("INBOX", "k1")
+    let archive = folder("Archive", "k2")
+    try folders.put_folder(&inbox, 0)
+    try folders.put_folder(&archive, 1)
+    try folders.commit()
+    var listed = try mail_db.read_folders(store, "acct")
+    assert(listed.folders.length() == 2 and listed.folders.at(0).path == "INBOX" and listed.folders.at(1).key == "k2")
+    listed.close()
+    var relisted = try mail_db.Batch.begin(store, "acct")
+    defer relisted.close()
+    try relisted.put_folder(&archive, 0)
+    let kept: str[1] = ["/fk2"]
+    try relisted.remove_others(kept)
+    try relisted.commit()
+    var after = try mail_db.read_folders(store, "acct")
+    assert(after.folders.length() == 1 and after.folders.at(0).path == "Archive")
+    after.close()
+    # Forgetting the account empties it and the folders it lists.
+    var again = try mail_db.Batch.begin(store, "acct")
+    defer again.close()
+    try again.put_folder(&inbox, 1)
+    try again.commit()
+    try mail_db.forget_account(held, "acct")
+    var gone = try mail_db.read_rows(store, "acct.k1")
+    defer gone.close()
+    var none_listed = try mail_db.read_folders(store, "acct")
+    defer none_listed.close()
+    assert(gone.rows.length() == 0 and none_listed.folders.length() == 0)

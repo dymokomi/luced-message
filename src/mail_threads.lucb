@@ -5,7 +5,7 @@
 ## ordered by their newest message, newest first, and so are the messages inside one.
 import memory
 from engine_text import Records, equal
-from mail_store import Index, Row
+from mail_store import Row
 
 ## One key and the row it came from, for sorted lookup.
 struct Keyed:
@@ -130,18 +130,18 @@ func lower_bound(keys: const Keyed[], digest: u64) -> usize?:
     return none
 
 ## Whether row `a` is newer than row `b`: by date, then UID.
-func newer(index: const Index*, a: u32, b: u32) -> bool:
-    let first = index.rows.at((usize)a)
-    let second = index.rows.at((usize)b)
+func newer(rows: const Records[Row]*, a: u32, b: u32) -> bool:
+    let first = rows.at((usize)a)
+    let second = rows.at((usize)b)
     if first.date != second.date:
         return first.date > second.date
     return first.uid > second.uid
 
-## Group `index`'s rows into conversations.
-pub func thread(index: const Index*) -> Threads!:
+## Group `rows` into conversations.
+pub func thread(rows: const Records[Row]*) -> Threads!:
     var threads: Threads
     errdefer threads.close()
-    let count = index.rows.length()
+    let count = rows.length()
     if count == 0:
         try threads.starts.add(0)
         return threads
@@ -154,24 +154,24 @@ pub func thread(index: const Index*) -> Threads!:
     let scratch = try alloc Keyed[count] in memory.heap
     defer free(scratch) in memory.heap
     for at in 0..<count:
-        ids[at] = Keyed(digest = digest_of(index.rows.at(at).message_id.bytes), row = (u32)at)
+        ids[at] = Keyed(digest = digest_of(rows.at(at).message_id.bytes), row = (u32)at)
     sort_keys(ids, scratch)
     # A reply joins the message it answers.
     for at in 0..<count:
-        let row = index.rows.at(at)
+        let row = rows.at(at)
         if row.in_reply_to.length == 0:
             continue
         if let first = lower_bound(ids, digest_of(row.in_reply_to.bytes)):
             var probe = first
             while probe < count and ids[probe].digest == ids[first].digest:
-                if equal(index.rows.at((usize)ids[probe].row).message_id.bytes, row.in_reply_to.bytes):
+                if equal(rows.at((usize)ids[probe].row).message_id.bytes, row.in_reply_to.bytes):
                     groups.join(ids[probe].row, (u32)at)
                 probe += 1
     # Replies to the same missing message join each other.
     let replies = try alloc Keyed[count] in memory.heap
     defer free(replies) in memory.heap
     for at in 0..<count:
-        let row = index.rows.at(at)
+        let row = rows.at(at)
         replies[at] = Keyed(digest = digest_of(row.in_reply_to.bytes) if row.in_reply_to.length > 0 else 0, row = (u32)at)
     sort_keys(replies, scratch)
     for at in 1..<count:
@@ -181,7 +181,7 @@ pub func thread(index: const Index*) -> Threads!:
     let subjects = try alloc Keyed[count] in memory.heap
     defer free(subjects) in memory.heap
     for at in 0..<count:
-        let base = base_subject(index.rows.at(at).subject.bytes)
+        let base = base_subject(rows.at(at).subject.bytes)
         subjects[at] = Keyed(digest = digest_of(base) if base.length > 0 else 0, row = (u32)at)
     sort_keys(subjects, scratch)
     var start: usize = 0
@@ -194,7 +194,7 @@ pub func thread(index: const Index*) -> Threads!:
             var anchor: u32? = none
             for at in start..<end:
                 let row = subjects[at].row
-                if is_reply(index.rows.at((usize)row).subject.bytes):
+                if is_reply(rows.at((usize)row).subject.bytes):
                     if let first = anchor:
                         groups.join(first, row)
                     else:
@@ -202,7 +202,7 @@ pub func thread(index: const Index*) -> Threads!:
             if let first = anchor:
                 for at in start..<end:
                     let row = subjects[at].row
-                    if groups.find(row) == row and not is_reply(index.rows.at((usize)row).subject.bytes):
+                    if groups.find(row) == row and not is_reply(rows.at((usize)row).subject.bytes):
                         groups.join(first, row)
         start = end
     # Order rows: by their thread's newest message, then newest first inside it.
@@ -212,12 +212,12 @@ pub func thread(index: const Index*) -> Threads!:
         newest[at] = 0xFFFFFFFF
     for at in 0..<count:
         let root = groups.find((u32)at)
-        if newest[root] == 0xFFFFFFFF or newer(index, (u32)at, newest[root]):
+        if newest[root] == 0xFFFFFFFF or newer(rows, (u32)at, newest[root]):
             newest[root] = (u32)at
-    let rows = try alloc u32[count] in memory.heap
-    defer free(rows) in memory.heap
+    let ordered = try alloc u32[count] in memory.heap
+    defer free(ordered) in memory.heap
     for at in 0..<count:
-        rows[at] = (u32)at
+        ordered[at] = (u32)at
     let spare = try alloc u32[count] in memory.heap
     defer free(spare) in memory.heap
     var width: usize = 1
@@ -229,28 +229,28 @@ pub func thread(index: const Index*) -> Threads!:
             var left = begin
             var right = middle
             for out in begin..<end:
-                let take_left = right >= end or (left < middle and not before(index, &groups, newest, rows[right], rows[left]))
+                let take_left = right >= end or (left < middle and not before(rows, &groups, newest, ordered[right], ordered[left]))
                 if take_left:
-                    spare[out] = rows[left]
+                    spare[out] = ordered[left]
                     left += 1
                 else:
-                    spare[out] = rows[right]
+                    spare[out] = ordered[right]
                     right += 1
             begin = end
         for at in 0..<count:
-            rows[at] = spare[at]
+            ordered[at] = spare[at]
         width *= 2
     for at in 0..<count:
-        if at == 0 or groups.find(rows[at]) != groups.find(rows[at - 1]):
+        if at == 0 or groups.find(ordered[at]) != groups.find(ordered[at - 1]):
             try threads.starts.add((u32)at)
-        try threads.order.add(rows[at])
+        try threads.order.add(ordered[at])
     try threads.starts.add((u32)count)
     return threads
 
 ## Whether row `a` goes before row `b`: its thread is newer, or, in one thread, it is.
-func before(index: const Index*, groups: Groups*, newest: const u32[], a: u32, b: u32) -> bool:
+func before(rows: const Records[Row]*, groups: Groups*, newest: const u32[], a: u32, b: u32) -> bool:
     let root_a = groups.find(a)
     let root_b = groups.find(b)
     if root_a != root_b:
-        return newer(index, newest[root_a], newest[root_b])
-    return newer(index, a, b)
+        return newer(rows, newest[root_a], newest[root_b])
+    return newer(rows, a, b)

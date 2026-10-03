@@ -37,7 +37,7 @@ What we reuse:
   Windows-125x, Shift_JIS, GBK, EUC-KR, KOI8). It is a heavy dependency, so
   luce-mime decodes UTF-8, US-ASCII, ISO-8859-1 and Windows-1252 itself. Other
   charsets go through a decoder hook the application supplies from text_codec.
-- **luce-prism**: the local store's mailbox indexes, as columnar documents.
+- **luce-prism**: the mail database: folders and every message's list fields.
 - **luce-config**: settings and account files (TOML).
 - **luce-ui**: DStack/Panel docking, TableView for the message list,
   ListView/tree for mailboxes, TextEditor (`read_only`, `wrap`) for the reader
@@ -101,16 +101,26 @@ room is a Folder, an event is a message.
 ```
 settings.toml                     window, layout, preferences
 accounts.toml                     accounts: kind, name, address, servers, auth method
-store/<account-id>/
-    folders.prisma                folder list: path, delimiter, role, special-use, counts
-    <folder-hash>/index.prism     columnar summary table (below)
-    <folder-hash>/<uid>.eml       raw RFC 5322 bytes, as fetched
+mail.prism                        the mail database (luce-prism, durable Store)
+store/<account-id>/<folder-key>/<uid>.eml   raw RFC 5322 bytes, as fetched
 ```
 
-The mailbox index is a luce-prism document holding typed columns: `uid u32[N]`,
-`flags u16[N]`, `date i64[N]`, `size u32[N]`, plus strings for `from`, `subject`
-and `preview`, with `uidvalidity` and `uidnext` scalars. Loading 50,000 summaries
-is one read of the columns. The message list sorts and filters on these columns.
+The mail database holds one prism identity per account and one per folder
+(`src/mail_db.lucb`):
+
+```
+<account>          /f<key>   folder: path, name, delimiter, flags, order, total, unseen
+<account>.<key>    /state    uid_validity, uid_next, modseq
+                   /m<uid>   message: uid, flags, date, size, attachment, sender,
+                             subject, message_id, in_reply_to, preview
+```
+
+Each engine thread writes its account in batch commits and bakes a folder after
+syncing it. The window reads snapshots through `Session.each_child`, which costs no
+Value per field. A folder has its own identity because a bake rewrites its
+identity's snapshot whole: syncing one folder then costs that folder. For the same
+reason bodies stay files. They are most of a mailbox's bytes and would be rewritten
+on every bake.
 
 **Secrets.** Passwords are not stored in `accounts.toml`. v1 keeps them in
 `secrets` with mode 0600 for the local test server only. The next step is a
