@@ -15,7 +15,7 @@ def package "luced-message" {
 
     def dependency "luce-ui" {
         str owner = "dymokomi"
-        str version = "^0.12.3"
+        str version = "^0.12.4"
         str path = "../luce-ui"
     }
 

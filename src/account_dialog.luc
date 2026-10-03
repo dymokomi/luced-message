@@ -1,6 +1,6 @@
 ## The Accounts dialog: add an email account (name, address, password, the IMAP and
-## SMTP servers with their ports and security) or change the one shown. Saving
-## writes accounts.toml and restarts the account's source.
+## SMTP servers with their ports and security), change the one shown, or remove it.
+## Saving writes accounts.toml and restarts the account's source.
 from ui import Dialog, VStack, HStack, Text, TextField, Button, Spacer, Font, Size, ListView, ListItem, Widget
 from interop import Connection
 from accounts import Account, account_id
@@ -26,6 +26,8 @@ pub class AccountDialog:
     var editing: int = -1
     ## Called with the accounts once one is saved.
     pub var on_save: func(list[Account]) -> unit!? = none
+    ## Called with the accounts left and the removed one's id.
+    pub var on_remove: func(list[Account], str) -> unit!? = none
 
     pub func init(self, font: Font) -> unit!:
         self.font = font
@@ -36,7 +38,7 @@ pub class AccountDialog:
         self.name_field = TextField("", font = font, placeholder = "Work", cells = 32.0)
         self.address_field = TextField("", font = font, placeholder = "alice@example.com", cells = 32.0)
         self.user_field = TextField("", font = font, placeholder = "the address, usually", cells = 32.0)
-        self.password_field = TextField("", font = font, placeholder = "an app password", cells = 32.0)
+        self.password_field = TextField("", font = font, placeholder = "an app password", cells = 32.0, secure = true)
         self.imap_host = TextField("", font = font, placeholder = "imap.example.com", cells = 24.0)
         self.imap_port = TextField("993", font = font, cells = 6.0)
         self.imap_security = TextField("tls", font = font, cells = 9.0)
@@ -45,10 +47,12 @@ pub class AccountDialog:
         self.smtp_security = TextField("starttls", font = font, cells = 9.0)
         self.notice = Text("Security: tls, starttls or plain (plain only for a local test server).", font = font, muted = true)
         let add = Button("Add Account", font = font)
+        let remove = Button("Remove", font = font)
         let save = Button("Save", font = font)
         let close = Button("Close", font = font)
         self.connections.append(add.on_click(func () -> unit!:
             self.edit(-1)))
+        self.connections.append(remove.on_click(self.remove))
         self.connections.append(save.on_click(self.save))
         self.connections.append(close.on_click(func () -> unit!:
             self.dialog.hide()))
@@ -57,7 +61,7 @@ pub class AccountDialog:
                            self.row("IMAP", HStack([self.imap_host, self.imap_port, self.imap_security], spacing = 6.0)),
                            self.row("SMTP", HStack([self.smtp_host, self.smtp_port, self.smtp_security], spacing = 6.0)),
                            self.notice, Spacer()], spacing = 8.0)
-        self.dialog = Dialog([Text("Accounts", font = font), HStack([VStack([self.picker, add], spacing = 6.0), form], spacing = 12.0),
+        self.dialog = Dialog([Text("Accounts", font = font), HStack([VStack([self.picker, HStack([add, remove], spacing = 6.0)], spacing = 6.0), form], spacing = 12.0),
                               HStack([Spacer(), close, save], spacing = 8.0)], width = 760.0)
         self.connections.append(self.dialog.on_cancel(func () -> unit!:
             self.dialog.hide()))
@@ -70,12 +74,26 @@ pub class AccountDialog:
     ## Open on `accounts`, editing the first or a new one.
     pub func open(self, accounts: list[Account]) -> unit!:
         self.accounts = accounts
+        self.list_accounts()
+        self.dialog.open()
+
+    ## Fill the picker and edit the first account, or a new one.
+    func list_accounts(self) -> unit!:
         var items: list[ListItem] = []
-        for account in accounts:
+        for account in self.accounts:
             items.append(ListItem(text = account.title()))
         self.picker.set_items(items)
-        self.edit(0 if accounts.length > 0 else -1)
-        self.dialog.open()
+        self.edit(0 if self.accounts.length > 0 else -1)
+
+    ## Remove the account shown: its settings and its password go.
+    func remove(self) -> unit!:
+        if self.editing < 0:
+            return
+        let id = self.accounts[self.editing].id
+        discard(self.accounts.remove_at(self.editing))
+        if let removed = self.on_remove:
+            removed(self.accounts, id)
+        self.list_accounts()
 
     func edit(self, at: int) -> unit!:
         self.editing = at if at >= 0 and at < self.accounts.length else -1

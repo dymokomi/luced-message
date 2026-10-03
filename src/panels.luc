@@ -54,6 +54,7 @@ pub class Panels:
         self.messages.on_pick = self.show_message
         self.composer.on_status = self.tell
         self.account_dialog.on_save = self.save_accounts
+        self.account_dialog.on_remove = self.remove_account
         self.connections.append(self.search.on_change(func (text: str) -> unit!:
             self.messages.set_matches(none)
             self.messages.set_filter(text)))
@@ -150,6 +151,12 @@ pub class Panels:
             self.tell("No accounts yet: Mailbox › Accounts… adds one.")
         else:
             self.sidebar.pick(0, "")
+
+    ## Forget a removed account's password, then save the accounts left.
+    func remove_account(self, accounts: list[Account], id: str) -> unit!:
+        self.store.forget(id) catch failure:
+            self.tell(f"The keychain kept the password: {failure.message}")
+        self.save_accounts(accounts)
 
     ## Save the accounts and restart every source with them.
     func save_accounts(self, accounts: list[Account]) -> unit!:
