@@ -33,7 +33,7 @@ pub class Sidebar:
             items.append(ListItem(text = source.title().upper(), icon = IconKind.folder_open))
             entries.append(Entry(source = position, folder = "", role = ""))
             let folders = source.folders() catch failure:
-                discard(failure)
+                _ = failure
                 recover []
             for folder in folders:
                 let count = f"  {folder.unseen}" if folder.unseen > 0 else ""

@@ -16,7 +16,7 @@ pub func folder_with(store: prism.Store, identity: str, rows: list[str]) -> unit
         tx.set(path, "attachment", prism.Value.boolean(field[4] == "1"))
         for (at, name) in ["sender", "subject", "message_id", "in_reply_to", "preview"].indexed():
             tx.set(path, name, prism.Value.text(unescape(field[5 + at])))
-    discard(tx.commit())
+    _ = tx.commit()
 
 ## Folders of tab-separated fields: path name delimiter flags key total unseen, listed
 ## in that order.
@@ -35,7 +35,7 @@ pub func account_with(store: prism.Store, account: str, folders: list[str]) -> u
         tx.set(path, "order", prism.Value.integer(order))
         tx.set(path, "total", prism.Value.integer(int(field[5])))
         tx.set(path, "unseen", prism.Value.integer(int(field[6])))
-    discard(tx.commit())
+    _ = tx.commit()
 
 func unescape(text: str) -> str:
     return text.replace("\\t", "\t").replace("\\n", "\n")

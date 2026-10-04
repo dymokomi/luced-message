@@ -18,7 +18,7 @@ pub func main(arguments: list[str]) -> int!:
         if listed < 0 and messenger.panels.messages.picked_uid() < 0 and ticks > 10:
             # No rows until the first sync lands.
             table.select(position) catch failure:
-                discard(failure)
+                _ = failure
             if messenger.panels.messages.picked_uid() >= 0:
                 listed = ticks
                 if query != "":
@@ -30,7 +30,7 @@ pub func main(arguments: list[str]) -> int!:
         messenger.panels.body.layout().invalidate())
     # The frame after `begin` is the one read back; the next ends the run.
     let observed = messenger.app.on_frame(func (elapsed: float) -> unit!:
-        discard(elapsed)
+        _ = elapsed
         if capture == 0:
             capture = 1
             probe.begin("Luced Message")

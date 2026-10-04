@@ -90,7 +90,7 @@ pub class AccountDialog:
         if self.editing < 0:
             return
         let id = self.accounts[self.editing].id
-        discard(self.accounts.remove_at(self.editing))
+        _ = self.accounts.remove_at(self.editing)
         if let removed = self.on_remove:
             removed(self.accounts, id)
         self.list_accounts()

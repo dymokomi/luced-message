@@ -85,14 +85,14 @@ pub class AccountStore:
         self.warning = ""
         var accounts: list[Account] = []
         let source = files.read_text(self.path, limit = 1048576) catch failure:
-            discard(failure)
+            _ = failure
             return accounts
         let table = Table(source) catch failure:
             self.warning = f"Accounts not read ({self.path}): {failure.message}"
             return accounts
         var ids: list[str] = []
         for (key, value) in table.values:
-            discard(value)
+            _ = value
             let dot = key.index_of(".") else continue
             let id = key[..<dot]
             if not (id in ids):
