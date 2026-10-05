@@ -1,7 +1,7 @@
 #prisma 4.0
 def package "luced-message" {
     str owner = "dymokomi"
-    str version = "0.3.1"
+    str version = "0.4.0"
     str kind = "application"
     str language = "luce"
     str description = "A messaging client written in Luce, with Apple Mail's working habits and luced's grey-and-orange docked panes: mailboxes, a message list and a reader, over sources (email first) synced in the background."
@@ -15,73 +15,73 @@ def package "luced-message" {
 
     def dependency "luce-ui" {
         str owner = "dymokomi"
-        str version = "^0.15.0"
+        str version = "^0.18.0"
         str path = "../luce-ui"
     }
 
     def dependency "luce-prism" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.5.0"
         str path = "../luce-prism"
     }
 
     def dependency "luce-mime" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.5.0"
         str path = "../luce-mime"
     }
 
     def dependency "luce-imap" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.5.0"
         str path = "../luce-imap"
     }
 
     def dependency "luce-smtp" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.5.0"
         str path = "../luce-smtp"
     }
 
     def dependency "luce-tls" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.6.0"
         str path = "../luce-tls"
     }
 
     def dependency "luce-keychain" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.5.0"
         str path = "../luce-keychain"
     }
 
     def dependency "luce-config" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.5.0"
         str path = "../luce-config"
     }
 
     def dependency "luce-color" {
         str owner = "dymokomi"
-        str version = "^0.6.0"
+        str version = "^0.7.0"
         str path = "../luce-color"
     }
 
     def dependency "luce-std" {
         str owner = "dymokomi"
-        str version = "^0.5.0"
+        str version = "^0.6.0"
         str path = "../luce-std"
     }
 
     def dependency "luce-gpu" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.5.0"
         str path = "../luce-gpu"
     }
 
     def dependency "luce-window" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.6.1"
         str path = "../luce-window"
     }
 }
