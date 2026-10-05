@@ -8,20 +8,20 @@ extend Engine:
     # mark: changes ==============================================================================
 
     ## Add (`add`) or remove flag bits `bits` on messages `uids` of folder `path`.
-    mutating func set_flags(path: const u8[], uids: const u8[], add: bool, bits: u16) -> !:
-        discard(try self.select(path))
+    func set_flags(path: const u8[], uids: const u8[], add: bool, bits: u16) -> !:
+        _ = try self.select(path)
         try self.session.store((str)uids, (imap.Flags)bits, add)
         try self.update_index(path, uids, bits, add, false)
 
     ## Move messages `uids` of folder `path` to folder `target`.
-    mutating func move(path: const u8[], uids: const u8[], target: const u8[]) -> !:
-        discard(try self.select(path))
+    func move(path: const u8[], uids: const u8[], target: const u8[]) -> !:
+        _ = try self.select(path)
         try self.session.move((str)uids, (str)target)
         try self.update_index(path, uids, 0, false, true)
         self.wants_full_sync = true
 
     ## Apply a flag change or a removal to folder `path` in the store and announce it.
-    mutating func update_index(path: const u8[], uids: const u8[], bits: u16, add: bool, remove: bool) -> !:
+    func update_index(path: const u8[], uids: const u8[], bits: u16, add: bool, remove: bool) -> !:
         var identity: Buffer
         defer identity.close()
         try self.folder_identity_of(path, &identity)
@@ -47,12 +47,12 @@ extend Engine:
 
     ## Send the message queued at `queued` in the outbox from `sender` to the
     ## comma-separated `recipients`. It leaves the outbox once sent; a failed one stays.
-    mutating func send(queued: const u8[], sender: const u8[], recipients: const u8[]):
+    func send(queued: const u8[], sender: const u8[], recipients: const u8[]):
         self.send_message(queued, sender, recipients) catch failure:
             self.post("unsent", queued, failure.message.bytes)
             recover ()
 
-    mutating func send_message(queued: const u8[], sender: const u8[], recipients: const u8[]) -> !:
+    func send_message(queued: const u8[], sender: const u8[], recipients: const u8[]) -> !:
         self.post("status", b"Sending")
         var message: Buffer
         defer message.close()
@@ -71,15 +71,15 @@ extend Engine:
         defer client.close()
         if self.account.smtp_user.length > 0:
             try client.login(self.account.smtp_user, self.account.smtp_password)
-        discard(try client.send((str)sender, list.view(), data))
+        _ = try client.send((str)sender, list.view(), data)
         client.quit()
         # A copy in the Sent folder, unless the server files one itself (it does not
         # say; Gmail does, most do not).
         if self.folders.length() == 0:
             try self.list_folders()
         if let sent = self.sent_folder():
-            discard(self.session.append(sent, data, imap.Flags.seen) catch failure:
-                recover 0)
+            _ = self.session.append(sent, data, imap.Flags.seen) catch failure:
+                recover 0
         try mail_db.unqueue(self.store, self.account.id, (str)queued)
         self.post("sent", queued)
         self.post("status", b"")
@@ -105,12 +105,12 @@ extend Engine:
         return none
 
     ## File the message queued at `queued` in the Drafts folder, marked as a draft.
-    mutating func save_draft(queued: const u8[]):
+    func save_draft(queued: const u8[]):
         self.file_draft(queued) catch failure:
             self.post("unsaved", queued, failure.message.bytes)
             recover ()
 
-    mutating func file_draft(queued: const u8[]) -> !:
+    func file_draft(queued: const u8[]) -> !:
         var message: Buffer
         defer message.close()
         if not try mail_db.read_queued(self.store, self.account.id, (str)queued, &message):
@@ -119,7 +119,7 @@ extend Engine:
         if self.folders.length() == 0:
             try self.list_folders()
         let drafts = self.drafts_folder() else error(imap.unsupported, "this account has no Drafts folder")
-        discard(try self.session.append(drafts, data, imap.Flags.seen | imap.Flags.draft))
+        _ = try self.session.append(drafts, data, imap.Flags.seen | imap.Flags.draft)
         try mail_db.unqueue(self.store, self.account.id, (str)queued)
         self.post("saved", queued)
         self.wants_full_sync = true
@@ -127,8 +127,8 @@ extend Engine:
 extend Engine:
     ## Ask the server which messages of folder `path` hold `query` in a header or the
     ## body, and say so: `found PATH UIDS`.
-    mutating func search(path: const u8[], query: const u8[]) -> !:
-        discard(try self.select(path))
+    func search(path: const u8[], query: const u8[]) -> !:
+        _ = try self.select(path)
         self.post("status", b"Searching")
         let uids = try self.session.search_text((str)query)
         var list: imap.Bytes

@@ -32,24 +32,33 @@ pub struct MessageIndex:
 
     pub func uid(at: i64) -> i64:
         return (i64)self.row(at).uid
+
     ## imap.Flags bits: 1 seen, 2 answered, 4 flagged, 8 deleted, 16 draft, 64 forwarded, 128 junk.
     pub func flags(at: i64) -> i64:
         return (i64)self.row(at).flags
+
     ## Seconds since 1970 UTC.
     pub func date(at: i64) -> i64:
         return self.row(at).date
+
     pub func size(at: i64) -> i64:
         return (i64)self.row(at).size
+
     pub func attachment(at: i64) -> bool:
         return self.row(at).attachment
+
     pub func sender(at: i64) -> str:
         return self.row(at).sender
+
     pub func subject(at: i64) -> str:
         return self.row(at).subject
+
     pub func message_id(at: i64) -> str:
         return self.row(at).message_id
+
     pub func in_reply_to(at: i64) -> str:
         return self.row(at).in_reply_to
+
     pub func preview(at: i64) -> str:
         return self.row(at).preview
 
@@ -76,7 +85,7 @@ pub struct MessageIndex:
         return (i64)self.order.at((usize)nth)
 
     ## Fill the UID and newest-first orders.
-    mutating func sort() -> !:
+    func sort() -> !:
         let count = self.rows.rows.length()
         for at in 0..<count:
             try self.by_uid.add((u32)at)
@@ -86,11 +95,11 @@ pub struct MessageIndex:
 
     ## Sort `positions` by UID (`by_uid`), else newest first; a stable merge sort, fast
     ## on the mostly sorted orders mailboxes have.
-    mutating func merge_sort(positions: Records[u32]*, by_uid: bool) -> !:
+    func merge_sort(positions: Records[u32]*, by_uid: bool) -> !:
         let count = positions.length()
         if count < 2:
             return
-        let scratch = try alloc u32[count] in memory.heap
+        let scratch = try new u32[count] --- in memory.heap
         defer free(scratch) in memory.heap
         var width: usize = 1
         while width < count:
@@ -170,7 +179,7 @@ pub struct MessageIndex:
                 return true
         return false
 
-    pub mutating func close():
+    pub func close():
         self.rows.close()
         self.by_uid.close()
         self.order.close()
@@ -212,16 +221,20 @@ pub struct FolderList:
     ## The server's name for folder `at`, used in commands.
     pub func path(at: i64) -> str:
         return self.folder(at).path
+
     ## The name to show.
     pub func name(at: i64) -> str:
         return self.folder(at).name
+
     ## The hierarchy delimiter as a character code, zero for none.
     pub func delimiter(at: i64) -> i64:
         return (i64)self.folder(at).delimiter
+
     ## imap.MailboxFlags bits: 256 all, 512 archive, 1024 drafts, 2048 flagged, 4096 junk,
     ## 8192 sent, 16384 trash.
     pub func flags(at: i64) -> i64:
         return (i64)self.folder(at).flags
+
     ## How many levels down folder `at` is: the delimiters in its path.
     pub func depth(at: i64) -> i64:
         let folder = self.folder(at)
@@ -248,12 +261,14 @@ pub struct FolderList:
     ## The folder's directory name in the store.
     pub func key(at: i64) -> str:
         return self.folder(at).key
+
     pub func total(at: i64) -> i64:
         return (i64)self.folder(at).total
+
     pub func unseen(at: i64) -> i64:
         return (i64)self.folder(at).unseen
 
-    pub mutating func close():
+    pub func close():
         self.listed.close()
 
 pub let folder_list_type: interop.Type[FolderList] = interop.Type[FolderList]("Folder list", FolderList.close, closeable = true)

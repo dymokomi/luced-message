@@ -59,13 +59,13 @@ pub struct Batch:
         let held = self.session else error(prism.closed, "the mail batch is closed")
         return try held.get()
 
-    mutating func message_path(uid: u32) -> str!:
+    func message_path(uid: u32) -> str!:
         self.path.clear()
         try self.path.put(b"/m")
         try self.path.number((i64)uid)
         return self.path.text_view()
 
-    mutating func element(path: str, kind: str) -> !:
+    func element(path: str, kind: str) -> !:
         let session = try self.session_of()
         if not try session.contains(path):
             try session.add(path, kind)
@@ -86,7 +86,7 @@ pub struct Batch:
         try (try self.session_of()).set(path, name, held)
 
     ## Add message `row`, or replace every field of the one with its UID.
-    pub mutating func put_row(row: const Row*) -> !:
+    pub func put_row(row: const Row*) -> !:
         let path = try self.message_path(row.uid)
         try self.element(path, "message")
         try self.integer(path, "uid", (i64)row.uid)
@@ -101,13 +101,13 @@ pub struct Batch:
         try self.text(path, "preview", row.preview)
         self.count += 1
 
-    pub mutating func set_flags(uid: u32, flags: u16) -> !:
+    pub func set_flags(uid: u32, flags: u16) -> !:
         let path = try self.message_path(uid)
         try self.integer(path, "flags", (i64)flags)
         self.count += 1
 
     ## What a fetched body tells the list: its opening and whether it has attachments.
-    pub mutating func set_body_summary(uid: u32, preview: str, attachment: bool) -> !:
+    pub func set_body_summary(uid: u32, preview: str, attachment: bool) -> !:
         let path = try self.message_path(uid)
         if not try (try self.session_of()).contains(path):
             return
@@ -115,7 +115,7 @@ pub struct Batch:
         try self.boolean(path, "attachment", attachment)
         self.count += 1
 
-    pub mutating func remove(uid: u32) -> !:
+    pub func remove(uid: u32) -> !:
         let path = try self.message_path(uid)
         let session = try self.session_of()
         if try session.contains(path):
@@ -123,7 +123,7 @@ pub struct Batch:
             self.count += 1
 
     ## The raw message `data` of `uid`, as the server sent it.
-    pub mutating func set_raw(uid: u32, data: const u8[]) -> !:
+    pub func set_raw(uid: u32, data: const u8[]) -> !:
         let path = try self.message_path(uid)
         let session = try self.session_of()
         if not try session.contains(path):
@@ -132,7 +132,7 @@ pub struct Batch:
         self.count += 1
 
     ## The folder's mailbox state.
-    pub mutating func put_state(uid_validity: u32, uid_next: u32, modseq: u64) -> !:
+    pub func put_state(uid_validity: u32, uid_next: u32, modseq: u64) -> !:
         try self.element("/state", "state")
         try self.integer("/state", "uid_validity", (i64)uid_validity)
         try self.integer("/state", "uid_next", (i64)uid_next)
@@ -140,7 +140,7 @@ pub struct Batch:
         self.count += 1
 
     ## Folder `folder`, listed at place `order`.
-    pub mutating func put_folder(folder: const Folder*, order: usize) -> !:
+    pub func put_folder(folder: const Folder*, order: usize) -> !:
         self.path.clear()
         try self.path.put(b"/f")
         try self.path.text(folder.key)
@@ -156,7 +156,7 @@ pub struct Batch:
         self.count += 1
 
     ## Remove every element but those named in `keep` (paths, sorted or not).
-    pub mutating func remove_others(keep: const str[]) -> !:
+    pub func remove_others(keep: const str[]) -> !:
         let session = try self.session_of()
         let children = try session.children("/")
         defer children.release()
@@ -173,11 +173,11 @@ pub struct Batch:
 
     ## Commit the writes so far, if there are any, and go on writing in a new commit:
     ## a long sync shows its progress commit by commit.
-    pub mutating func flush() -> !:
+    pub func flush() -> !:
         if self.count == 0:
             return
         let session = try self.session_of()
-        discard(try session.commit(wait_ms = wait_ms))
+        _ = try session.commit(wait_ms = wait_ms)
         if let held = self.session:
             held.release()
         self.session = none
@@ -185,12 +185,12 @@ pub struct Batch:
         self.session = try self.store.begin_identity(self.identity.text_view())
 
     ## Commit the writes, if there are any, and end the batch.
-    pub mutating func commit() -> !:
+    pub func commit() -> !:
         if self.count > 0:
-            discard(try (try self.session_of()).commit(wait_ms = wait_ms))
+            _ = try (try self.session_of()).commit(wait_ms = wait_ms)
         self.close()
 
-    pub mutating func close():
+    pub func close():
         if let held = self.session:
             held.release()
         self.session = none
@@ -207,7 +207,7 @@ func put_raw(session: prism.Session*, path: str, data: const u8[]) -> !:
 ## replay them. The engine bakes a folder after syncing it.
 pub func bake(store: prism.Store*, identity: str) -> !:
     if try store.mounted(identity):
-        discard(try store.bake_identity(identity, wait_ms = wait_ms))
+        _ = try store.bake_identity(identity, wait_ms = wait_ms)
 
 ## A folder's mailbox state and, for the engine, its messages' UIDs and flags.
 pub struct Ledger:
@@ -246,7 +246,7 @@ pub struct Ledger:
         return count
 
     ## Record `uid` with `flags` and whether its body is stored, keeping UIDs sorted.
-    pub mutating func put(uid: u32, flags: u16, body: bool = false) -> !:
+    pub func put(uid: u32, flags: u16, body: bool = false) -> !:
         if let at = self.find(uid):
             self.flags.set(at, flags)
             self.bodies.set(at, body or self.bodies.at(at))
@@ -268,21 +268,21 @@ pub struct Ledger:
         let at = self.find(uid) else return false
         return self.bodies.at(at)
 
-    pub mutating func remove_at(at: usize):
+    pub func remove_at(at: usize):
         self.uids.remove(at)
         self.flags.remove(at)
         self.bodies.remove(at)
 
-    pub mutating func remove(uid: u32):
+    pub func remove(uid: u32):
         if let at = self.find(uid):
             self.remove_at(at)
 
-    pub mutating func clear():
+    pub func clear():
         self.uids.clear()
         self.flags.clear()
         self.bodies.clear()
 
-    pub mutating func close():
+    pub func close():
         self.uids.close()
         self.flags.close()
         self.bodies.close()
@@ -318,7 +318,7 @@ pub struct Rows:
     pub var rows: Records[Row]
     pub var pool: Pool
 
-    pub mutating func close():
+    pub func close():
         self.rows.close()
         self.pool.close()
 
@@ -350,7 +350,7 @@ pub struct Folders:
     var orders: Records[i64]
     pub var pool: Pool
 
-    pub mutating func close():
+    pub func close():
         self.folders.close()
         self.orders.close()
         self.pool.close()
@@ -478,7 +478,7 @@ pub func queue(held: interop.Reference[prism.Store], account: str, message: str)
     let session = try tx.get()
     try session.add(path.text_view(), "outgoing")
     try put_raw(session, path.text_view(), message.bytes)
-    discard(try session.commit(wait_ms = wait_ms))
+    _ = try session.commit(wait_ms = wait_ms)
     return try interop.copy_text(path.text_view())
 
 ## The queued message at `path` in `account`'s outbox, onto `out`; false when gone.

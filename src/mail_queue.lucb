@@ -20,28 +20,28 @@ pub struct Mailroom:
     pub var store: prism.Store*?
 
     ## Queue command `line` for the engine (window side).
-    pub mutating func push(line: const u8[]) -> !:
+    pub func push(line: const u8[]) -> !:
         self.lock.lock()
         defer self.lock.unlock()
         try self.commands.put(line)
         try self.commands.byte('\n')
 
     ## Move every pending event line onto `out` (window side).
-    pub mutating func drain(out: Buffer*) -> !:
+    pub func drain(out: Buffer*) -> !:
         self.lock.lock()
         defer self.lock.unlock()
         try out.put(self.events.view())
         self.events.clear()
 
     ## Ask the engine to stop and end its network waits (window side).
-    pub mutating func stop():
+    pub func stop():
         self.lock.lock()
         self.stopping = true
         self.lock.unlock()
         self.quit.request()
 
     ## Post event `line` for the window (engine side).
-    pub mutating func post(line: const u8[]):
+    pub func post(line: const u8[]):
         self.lock.lock()
         defer self.lock.unlock()
         self.events.put(line) catch failure:
@@ -50,7 +50,7 @@ pub struct Mailroom:
             return
 
     ## Take the next command onto `out`; whether there was one (engine side).
-    pub mutating func take(out: Buffer*) -> bool!:
+    pub func take(out: Buffer*) -> bool!:
         self.lock.lock()
         defer self.lock.unlock()
         let data = self.commands.view()
@@ -67,18 +67,18 @@ pub struct Mailroom:
         return true
 
     ## Whether a command is waiting (engine side).
-    pub mutating func has_command() -> bool:
+    pub func has_command() -> bool:
         self.lock.lock()
         defer self.lock.unlock()
         return self.commands.used > 0
 
     ## Whether the engine should stop (engine side).
-    pub mutating func stopped() -> bool:
+    pub func stopped() -> bool:
         self.lock.lock()
         defer self.lock.unlock()
         return self.stopping
 
-    pub mutating func close():
+    pub func close():
         self.commands.close()
         self.events.close()
         self.config.close()

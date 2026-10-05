@@ -11,7 +11,7 @@ pub struct Buffer:
     pub var data: u8[]
     pub var used: usize
 
-    mutating func reserve(extra: usize) -> !:
+    func reserve(extra: usize) -> !:
         let needed = self.used + extra
         if needed + 1 <= self.data.length:
             return
@@ -24,21 +24,21 @@ pub struct Buffer:
             free(self.data) in memory.heap
         self.data = grown
 
-    pub mutating func put(data: const u8[]) -> !:
+    pub func put(data: const u8[]) -> !:
         try self.reserve(data.length)
         memory.copy(self.data[self.used..], data, data.length)
         self.used += data.length
 
-    pub mutating func text(text: str) -> !:
+    pub func text(text: str) -> !:
         try self.put(text.bytes)
 
-    pub mutating func byte(value: u8) -> !:
+    pub func byte(value: u8) -> !:
         try self.reserve(1)
         self.data[self.used] = value
         self.used += 1
 
     ## Append `value` in decimal.
-    pub mutating func number(value: i64) -> !:
+    pub func number(value: i64) -> !:
         var digits: u8[20]
         var count: usize = 0
         var rest: u64 = (u64)(value if value >= 0 else -value)
@@ -53,7 +53,7 @@ pub struct Buffer:
             try self.byte(digits[count])
 
     ## Append `data` as one field: tabs, newlines and backslashes escaped.
-    pub mutating func field(data: const u8[]) -> !:
+    pub func field(data: const u8[]) -> !:
         for byte in data:
             if byte == '\t':
                 try self.put(b"\\t")
@@ -77,15 +77,15 @@ pub struct Buffer:
         return (str)data[0..<(utf8.invalid_offset(data) else 0)]
 
     ## The contents as a C string, valid until the next change.
-    pub mutating func terminated() -> c.str!:
+    pub func terminated() -> c.str!:
         try self.reserve(1)
         self.data[self.used] = 0
         return (c.str)(str)self.data[0..<self.used]
 
-    pub mutating func clear():
+    pub func clear():
         self.used = 0
 
-    pub mutating func close():
+    pub func close():
         if self.data.length > 0:
             free(self.data) in memory.heap
         var empty: u8[]
@@ -98,7 +98,7 @@ pub struct Pool:
     var count: usize
     var used: usize
 
-    pub mutating func keep(data: const u8[]) -> const u8[]!:
+    pub func keep(data: const u8[]) -> const u8[]!:
         if data.length == 0:
             var empty: const u8[]
             return empty
@@ -120,11 +120,11 @@ pub struct Pool:
         return room
 
     ## A kept copy of text `data`; bytes that are not UTF-8 are dropped from the end.
-    pub mutating func keep_text(data: const u8[]) -> str!:
+    pub func keep_text(data: const u8[]) -> str!:
         let valid = data if utf8.valid(data) else data[0..<(utf8.invalid_offset(data) else 0)]
         return (str)(try self.keep(valid))
 
-    pub mutating func close():
+    pub func close():
         for index in 0..<self.count:
             free(self.chunks[index]) in memory.heap
         if self.chunks.length > 0:
@@ -139,10 +139,10 @@ pub struct Records[T]:
     var data: T[]
     var used: usize
 
-    pub mutating func add(value: T) -> !:
+    pub func add(value: T) -> !:
         if self.used == self.data.length:
             let capacity: usize = 16 if self.data.length == 0 else self.data.length * 2
-            let grown = try alloc T[capacity] in memory.heap
+            let grown = try new T[capacity] --- in memory.heap
             for index in 0..<self.used:
                 grown[index] = self.data[index]
             if self.data.length > 0:
@@ -152,7 +152,7 @@ pub struct Records[T]:
         self.used += 1
 
     ## Remove the value at `index`, keeping the order of the rest.
-    pub mutating func remove(index: usize):
+    pub func remove(index: usize):
         if index >= self.used:
             return
         for at in index..<self.used - 1:
@@ -165,16 +165,16 @@ pub struct Records[T]:
     pub func at(index: usize) -> T:
         return self.data[index]
 
-    pub mutating func set(index: usize, value: T):
+    pub func set(index: usize, value: T):
         self.data[index] = value
 
     pub func view() -> const T[]:
         return self.data[0..<self.used]
 
-    pub mutating func clear():
+    pub func clear():
         self.used = 0
 
-    pub mutating func close():
+    pub func close():
         if self.data.length > 0:
             free(self.data) in memory.heap
         var empty: T[]

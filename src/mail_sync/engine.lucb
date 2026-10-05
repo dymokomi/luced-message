@@ -4,7 +4,6 @@
 #
 #==============================================================================================
 
-
 pub struct Engine:
     var room: Mailroom*
     ## The mail database the window shares; it outlives the engine.
@@ -41,7 +40,7 @@ pub struct Engine:
         engine.account.smtp_password = try engine.config_field(&fields, 10, &scratch)
         return engine
 
-    mutating func config_field(fields: const Fields*, at: usize, scratch: Buffer*) -> str!:
+    func config_field(fields: const Fields*, at: usize, scratch: Buffer*) -> str!:
         scratch.clear()
         try fields.unescape(at, scratch)
         return try self.text.keep_text(scratch.view())
@@ -49,7 +48,7 @@ pub struct Engine:
     # mark: events ===============================================================================
 
     ## Post an event of `kind` with up to three fields.
-    mutating func post(kind: str, first: const u8[] = b"", second: const u8[] = b"", third: const u8[] = b""):
+    func post(kind: str, first: const u8[] = b"", second: const u8[] = b"", third: const u8[] = b""):
         var line: Buffer
         defer line.close()
         line.text(kind) catch failure:
@@ -66,7 +65,7 @@ pub struct Engine:
     # mark: the loop =============================================================================
 
     ## Serve the account until the window stops the engine.
-    pub mutating func run():
+    pub func run():
         while not self.room.stopped():
             self.step() catch failure:
                 if self.room.stopped():
@@ -75,7 +74,7 @@ pub struct Engine:
                 recover ()
 
     ## One turn: connect if needed, run a waiting command, sync when due, else wait.
-    mutating func step() -> !:
+    func step() -> !:
         if not self.online:
             if time.now() < self.retry_at:
                 self.pause()
@@ -92,14 +91,14 @@ pub struct Engine:
         try self.watch()
 
     ## Wait a moment for a command or the end, while offline.
-    mutating func pause():
+    func pause():
         var waited: u64 = 0
         while waited < 1000 and not self.room.stopped() and not self.room.has_command():
             thread.sleep(50)
             waited += 50
 
     ## Close the session and say why; reconnect after a while.
-    mutating func go_offline(reason: str):
+    func go_offline(reason: str):
         if self.online:
             self.session.close()
         self.online = false
@@ -108,7 +107,7 @@ pub struct Engine:
         self.post("offline", reason.bytes)
 
     ## Connect and log in.
-    mutating func connect() -> !:
+    func connect() -> !:
         self.post("status", b"Connecting")
         self.session = try imap.Session.open(self.account.imap_host, self.account.imap_port, self.account.imap_security, cancellation = &self.room.quit)
         self.online = true
@@ -119,7 +118,7 @@ pub struct Engine:
     # mark: commands =============================================================================
 
     ## Run one command line from the window.
-    mutating func handle(line: const u8[]) -> !:
+    func handle(line: const u8[]) -> !:
         let fields = Fields.split(line)
         let name = fields.raw(0)
         var path: Buffer
@@ -170,7 +169,7 @@ pub struct Engine:
     # mark: selecting ============================================================================
 
     ## Select folder `path` unless it is already.
-    mutating func select(path: const u8[]) -> imap.Selected!:
+    func select(path: const u8[]) -> imap.Selected!:
         if equal(self.selected.view(), path) and self.session.is_selected():
             return self.session.selected
         self.selected.clear()
@@ -182,7 +181,7 @@ pub struct Engine:
 
     ## Wait in IDLE on INBOX until it has news, the window has a command, or a full sync
     ## is due; then bring INBOX up to date if it changed.
-    mutating func watch() -> !:
+    func watch() -> !:
         var inbox: usize? = none
         for at in 0..<self.folders.length():
             if imap.same(self.folders.at(at).path.bytes, b"INBOX"):
@@ -191,7 +190,7 @@ pub struct Engine:
             self.pause()
             return
         let at = inbox else return
-        discard(try self.select(b"INBOX"))
+        _ = try self.select(b"INBOX")
         self.session.take_events()
         let started = time.now()
         if try self.session.idle_start():
@@ -209,7 +208,7 @@ pub struct Engine:
             try self.save_folders()
             self.post("folders")
 
-    pub mutating func close():
+    pub func close():
         if self.online:
             self.session.logout()
         self.online = false

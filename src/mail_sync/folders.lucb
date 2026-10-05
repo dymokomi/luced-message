@@ -8,7 +8,7 @@ extend Engine:
     # mark: syncing ==============================================================================
 
     ## List the folders and bring every one up to date.
-    mutating func sync_all() -> !:
+    func sync_all() -> !:
         self.wants_full_sync = false
         self.last_full_sync = time.now()
         self.post("status", b"Checking for mail")
@@ -27,7 +27,7 @@ extend Engine:
         self.post("status", b"")
 
     ## Learn the folders, INBOX first, and store the list.
-    mutating func list_folders() -> !:
+    func list_folders() -> !:
         let mailboxes = try self.session.list()
         self.folders.clear()
         self.folder_text.close()
@@ -47,7 +47,7 @@ extend Engine:
         self.post("folders")
 
     ## Store the folder list in the account's identity, dropping folders that are gone.
-    mutating func save_folders() -> !:
+    func save_folders() -> !:
         var batch = try mail_db.Batch.begin(self.store, self.account.id)
         defer batch.close()
         var kept: Pool
@@ -67,7 +67,7 @@ extend Engine:
         try batch.commit()
 
     ## Bring folder number `at` up to date.
-    mutating func sync_folder(at: usize) -> !:
+    func sync_folder(at: usize) -> !:
         let folder = self.folders.at(at)
         let path = folder.path.bytes
         var identity: Buffer
@@ -107,7 +107,7 @@ extend Engine:
         self.folders.set(at, updated)
 
     ## Update every held message's flags and drop the ones the server no longer has.
-    mutating func refresh_flags(ledger: mail_db.Ledger*, batch: mail_db.Batch*) -> !:
+    func refresh_flags(ledger: mail_db.Ledger*, batch: mail_db.Batch*) -> !:
         var set: Buffer
         defer set.close()
         try set.put(b"1:")
@@ -133,7 +133,7 @@ extend Engine:
 
     ## Fetch the headers of messages newer than the folder holds, committing each batch
     ## so the window shows them as they come. Whether any arrived.
-    mutating func fetch_new(path: const u8[], ledger: mail_db.Ledger*, batch: mail_db.Batch*) -> bool!:
+    func fetch_new(path: const u8[], ledger: mail_db.Ledger*, batch: mail_db.Batch*) -> bool!:
         var criteria: Buffer
         defer criteria.close()
         try criteria.put(b"UID ")
@@ -169,7 +169,7 @@ extend Engine:
         return any
 
     ## Fetch INBOX's newest bodies that are not in the store yet.
-    mutating func prefetch(path: const u8[], ledger: mail_db.Ledger*, batch: mail_db.Batch*) -> !:
+    func prefetch(path: const u8[], ledger: mail_db.Ledger*, batch: mail_db.Batch*) -> !:
         var fetched: usize = 0
         var at = ledger.uids.length()
         while at > 0 and fetched < prefetch_count:
@@ -188,7 +188,7 @@ extend Engine:
 
     ## Fetch message `uid` of the selected folder into the store, with the preview and
     ## attachment mark its row shows. Whether the server had it.
-    mutating func store_body(uid: u32, batch: mail_db.Batch*) -> bool!:
+    func store_body(uid: u32, batch: mail_db.Batch*) -> bool!:
         let data = try self.session.fetch_message(uid)
         if data.length == 0:
             return false
@@ -199,15 +199,15 @@ extend Engine:
         return true
 
     ## Fetch message `uid` of folder `path` for the window, which waits for it.
-    mutating func fetch_body(path: const u8[], uid: u32) -> !:
+    func fetch_body(path: const u8[], uid: u32) -> !:
         var identity: Buffer
         defer identity.close()
         try self.folder_identity_of(path, &identity)
         if not try mail_db.has_body(self.store, identity.text_view(), uid):
-            discard(try self.select(path))
+            _ = try self.select(path)
             var batch = try mail_db.Batch.begin(self.store, identity.text_view())
             defer batch.close()
-            discard(try self.store_body(uid, &batch))
+            _ = try self.store_body(uid, &batch)
             let changed = batch.count > 0
             try batch.commit()
             if changed:

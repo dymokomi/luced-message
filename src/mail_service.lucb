@@ -29,19 +29,19 @@ pub struct MailService:
     var polled: Buffer
 
     ## Queue command `line` (tab-separated fields, see mail_sync) for the engine.
-    pub mutating func submit(line: str) -> !:
+    pub func submit(line: str) -> !:
         let room = self.room else error(interop.worker_closed, "the mail service is closed")
         try room.push(line.bytes)
 
     ## The events since the last poll, one per line; empty text when there are none.
-    pub mutating func poll() -> str!:
+    pub func poll() -> str!:
         self.polled.clear()
         let room = self.room else return ""
         try room.drain(&self.polled)
         return self.polled.text_view()
 
     ## Stop the engine and wait for its thread.
-    pub mutating func close():
+    pub func close():
         let room = self.room else return
         room.stop()
         self.handle.join() catch failure:

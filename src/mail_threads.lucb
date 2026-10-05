@@ -31,7 +31,7 @@ pub struct Threads:
     pub func member(nth: usize, member: usize) -> u32:
         return self.order.at((usize)self.starts.at(nth) + member)
 
-    pub mutating func close():
+    pub func close():
         self.order.close()
         self.starts.close()
 
@@ -80,14 +80,14 @@ func is_reply(subject: const u8[]) -> bool:
 struct Groups:
     var parent: u32[]
 
-    mutating func find(row: u32) -> u32:
+    func find(row: u32) -> u32:
         var current = row
         while self.parent[current] != current:
             self.parent[current] = self.parent[self.parent[current]]
             current = self.parent[current]
         return current
 
-    mutating func join(a: u32, b: u32):
+    func join(a: u32, b: u32):
         let root_a = self.find(a)
         let root_b = self.find(b)
         if root_a != root_b:
@@ -145,13 +145,13 @@ pub func thread(rows: const Records[Row]*) -> Threads!:
     if count == 0:
         try threads.starts.add(0)
         return threads
-    var groups = Groups(parent = try alloc u32[count] in memory.heap)
+    var groups = Groups(parent = try new u32[count] --- in memory.heap)
     defer free(groups.parent) in memory.heap
     for at in 0..<count:
         groups.parent[at] = (u32)at
-    let ids = try alloc Keyed[count] in memory.heap
+    let ids = try new Keyed[count] --- in memory.heap
     defer free(ids) in memory.heap
-    let scratch = try alloc Keyed[count] in memory.heap
+    let scratch = try new Keyed[count] --- in memory.heap
     defer free(scratch) in memory.heap
     for at in 0..<count:
         ids[at] = Keyed(digest = digest_of(rows.at(at).message_id.bytes), row = (u32)at)
@@ -168,7 +168,7 @@ pub func thread(rows: const Records[Row]*) -> Threads!:
                     groups.join(ids[probe].row, (u32)at)
                 probe += 1
     # Replies to the same missing message join each other.
-    let replies = try alloc Keyed[count] in memory.heap
+    let replies = try new Keyed[count] --- in memory.heap
     defer free(replies) in memory.heap
     for at in 0..<count:
         let row = rows.at(at)
@@ -178,7 +178,7 @@ pub func thread(rows: const Records[Row]*) -> Threads!:
         if replies[at].digest != 0 and replies[at].digest == replies[at - 1].digest:
             groups.join(replies[at - 1].row, replies[at].row)
     # A reply still alone joins the thread of the same base subject.
-    let subjects = try alloc Keyed[count] in memory.heap
+    let subjects = try new Keyed[count] --- in memory.heap
     defer free(subjects) in memory.heap
     for at in 0..<count:
         let base = base_subject(rows.at(at).subject.bytes)
@@ -206,7 +206,7 @@ pub func thread(rows: const Records[Row]*) -> Threads!:
                         groups.join(first, row)
         start = end
     # Order rows: by their thread's newest message, then newest first inside it.
-    let newest = try alloc u32[count] in memory.heap
+    let newest = try new u32[count] --- in memory.heap
     defer free(newest) in memory.heap
     for at in 0..<count:
         newest[at] = 0xFFFFFFFF
@@ -214,11 +214,11 @@ pub func thread(rows: const Records[Row]*) -> Threads!:
         let root = groups.find((u32)at)
         if newest[root] == 0xFFFFFFFF or newer(rows, (u32)at, newest[root]):
             newest[root] = (u32)at
-    let ordered = try alloc u32[count] in memory.heap
+    let ordered = try new u32[count] --- in memory.heap
     defer free(ordered) in memory.heap
     for at in 0..<count:
         ordered[at] = (u32)at
-    let spare = try alloc u32[count] in memory.heap
+    let spare = try new u32[count] --- in memory.heap
     defer free(spare) in memory.heap
     var width: usize = 1
     while width < count:
