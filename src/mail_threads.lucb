@@ -5,7 +5,6 @@
 ## ordered by their newest message, newest first, and so are the messages inside one.
 import memory
 from luce_std.collections import List
-from engine_text import equal
 from mail_store import Row
 
 ## One key and the row it came from, for sorted lookup.
@@ -165,7 +164,7 @@ pub func thread(rows: const List[Row]*) -> Threads!:
         if let first = lower_bound(ids, digest_of(row.in_reply_to.bytes)):
             var probe = first
             while probe < count and ids[probe].digest == ids[first].digest:
-                if equal(rows.at((usize)ids[probe].row).message_id.bytes, row.in_reply_to.bytes):
+                if rows.at((usize)ids[probe].row).message_id.bytes == row.in_reply_to.bytes:
                     groups.join(ids[probe].row, (u32)at)
                 probe += 1
     # Replies to the same missing message join each other.

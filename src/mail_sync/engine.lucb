@@ -124,16 +124,16 @@ pub struct Engine:
         var path: Buffer
         defer path.destroy()
         try fields.unescape(1, &path)
-        if equal(name, b"sync"):
+        if name == b"sync":
             self.wants_full_sync = true
-        elif equal(name, b"body"):
+        elif name == b"body":
             try self.fetch_body(path.view(), (u32)fields.number(2))
-        elif equal(name, b"flags"):
+        elif name == b"flags":
             var uids: Buffer
             defer uids.destroy()
             try fields.unescape(2, &uids)
             try self.set_flags(path.view(), uids.view(), fields.number(3) != 0, (u16)fields.number(4))
-        elif equal(name, b"move"):
+        elif name == b"move":
             var uids: Buffer
             defer uids.destroy()
             try fields.unescape(2, &uids)
@@ -141,7 +141,7 @@ pub struct Engine:
             defer target.destroy()
             try fields.unescape(3, &target)
             try self.move(path.view(), uids.view(), target.view())
-        elif equal(name, b"send"):
+        elif name == b"send":
             var sender: Buffer
             defer sender.destroy()
             try fields.unescape(2, &sender)
@@ -149,9 +149,9 @@ pub struct Engine:
             defer recipients.destroy()
             try fields.unescape(3, &recipients)
             self.send(path.view(), sender.view(), recipients.view())
-        elif equal(name, b"draft"):
+        elif name == b"draft":
             self.save_draft(path.view())
-        elif equal(name, b"search"):
+        elif name == b"search":
             var query: Buffer
             defer query.destroy()
             try fields.unescape(2, &query)
@@ -170,7 +170,7 @@ pub struct Engine:
 
     ## Select folder `path` unless it is already.
     func select(path: const u8[]) -> imap.Selected!:
-        if equal(self.selected.view(), path) and self.session.is_selected():
+        if self.selected.view() == path and self.session.is_selected():
             return self.session.selected
         self.selected.clear()
         let state = try self.session.select((str)path)
