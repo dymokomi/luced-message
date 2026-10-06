@@ -15,7 +15,7 @@
 import interop
 import time
 from luce_prism import prism
-from engine_text import Buffer, Pool, Records
+from luce_std.collections import Buffer, TextPool, List
 from mail_store import Row, Folder
 
 ## How long a commit or bake waits for another writer of the same identity.
@@ -24,8 +24,8 @@ let wait_ms: i64 = 1000
 ## The identity of `account`'s folder with store key `key`, onto `out`.
 pub func folder_identity(account: str, key: const u8[], out: Buffer*) -> !:
     out.clear()
-    try out.text(account)
-    try out.byte('.')
+    try out.put_text(account)
+    try out.put_byte('.')
     try out.put(key)
 
 ## Mount `identity` unless the store has it already.
@@ -51,7 +51,7 @@ pub struct Batch:
         try ensure(store, identity)
         var batch = Batch(store = store)
         errdefer batch.close()
-        try batch.identity.text(identity)
+        try batch.identity.put_text(identity)
         batch.session = try store.begin_identity(identity)
         return batch
 
@@ -62,8 +62,8 @@ pub struct Batch:
     func message_path(uid: u32) -> str!:
         self.path.clear()
         try self.path.put(b"/m")
-        try self.path.number((i64)uid)
-        return self.path.text_view()
+        try self.path.put_number((i64)uid)
+        return self.path.text()
 
     func element(path: str, kind: str) -> !:
         let session = try self.session_of()
@@ -143,8 +143,8 @@ pub struct Batch:
     pub func put_folder(folder: const Folder*, order: usize) -> !:
         self.path.clear()
         try self.path.put(b"/f")
-        try self.path.text(folder.key)
-        let path = self.path.text_view()
+        try self.path.put_text(folder.key)
+        let path = self.path.text()
         try self.element(path, "folder")
         try self.text(path, "path", folder.path)
         try self.text(path, "name", folder.name)
@@ -182,7 +182,7 @@ pub struct Batch:
             held.release()
         self.session = none
         self.count = 0
-        self.session = try self.store.begin_identity(self.identity.text_view())
+        self.session = try self.store.begin_identity(self.identity.text())
 
     ## Commit the writes, if there are any, and end the batch.
     pub func commit() -> !:
@@ -194,8 +194,8 @@ pub struct Batch:
         if let held = self.session:
             held.release()
         self.session = none
-        self.identity.close()
-        self.path.close()
+        self.identity.destroy()
+        self.path.destroy()
 
 func put_raw(session: prism.Session*, path: str, data: const u8[]) -> !:
     let shape: i64[1] = [(i64)data.length]
@@ -215,10 +215,10 @@ pub struct Ledger:
     pub var uid_next: u32
     pub var modseq: u64
     ## Sorted by UID.
-    pub var uids: Records[u32]
-    pub var flags: Records[u16]
+    pub var uids: List[u32]
+    pub var flags: List[u16]
     ## Whether each message's raw text is in the store.
-    pub var bodies: Records[bool]
+    pub var bodies: List[bool]
 
     pub func find(uid: u32) -> usize?:
         var low: usize = 0
@@ -251,9 +251,9 @@ pub struct Ledger:
             self.flags.set(at, flags)
             self.bodies.set(at, body or self.bodies.at(at))
             return
-        try self.uids.add(uid)
-        try self.flags.add(flags)
-        try self.bodies.add(body)
+        try self.uids.append(uid)
+        try self.flags.append(flags)
+        try self.bodies.append(body)
         var at = self.uids.length() - 1
         while at > 0 and self.uids.at(at - 1) > uid:
             self.uids.set(at, self.uids.at(at - 1))
@@ -283,9 +283,9 @@ pub struct Ledger:
         self.bodies.clear()
 
     pub func close():
-        self.uids.close()
-        self.flags.close()
-        self.bodies.close()
+        self.uids.destroy()
+        self.flags.destroy()
+        self.bodies.destroy()
 
 func ledger_row(context: void*?, row: const prism.RowView*) -> !:
     let ledger = (Ledger*)(context else error(prism.invalid, "no ledger"))
@@ -315,17 +315,17 @@ func integer_of(session: prism.Session*, path: str, name: str) -> i64!:
 
 ## Rows read from a folder identity, their text kept in `pool`.
 pub struct Rows:
-    pub var rows: Records[Row]
-    pub var pool: Pool
+    pub var rows: List[Row]
+    pub var pool: TextPool
 
     pub func close():
-        self.rows.close()
-        self.pool.close()
+        self.rows.destroy()
+        self.pool.destroy()
 
 func collect_row(context: void*?, view: const prism.RowView*) -> !:
     let into = (Rows*)(context else error(prism.invalid, "no rows"))
     let uid = view.integer("uid") else return
-    try into.rows.add(Row(uid = (u32)uid, flags = (u16)(view.integer("flags") else 0), date = view.integer("date") else 0,
+    try into.rows.append(Row(uid = (u32)uid, flags = (u16)(view.integer("flags") else 0), date = view.integer("date") else 0,
                           size = (u32)(view.integer("size") else 0), attachment = view.boolean("attachment") else false,
                           sender = try into.pool.keep_text((view.text("sender") else "").bytes),
                           subject = try into.pool.keep_text((view.text("subject") else "").bytes),
@@ -346,14 +346,14 @@ pub func read_rows(store: prism.Store*, identity: str) -> Rows!:
 
 ## Folders read from an account identity, their text kept in `pool`.
 pub struct Folders:
-    pub var folders: Records[Folder]
-    var orders: Records[i64]
-    pub var pool: Pool
+    pub var folders: List[Folder]
+    var orders: List[i64]
+    pub var pool: TextPool
 
     pub func close():
-        self.folders.close()
-        self.orders.close()
-        self.pool.close()
+        self.folders.destroy()
+        self.orders.destroy()
+        self.pool.destroy()
 
 func collect_folder(context: void*?, view: const prism.RowView*) -> !:
     let into = (Folders*)(context else error(prism.invalid, "no folders"))
@@ -367,8 +367,8 @@ func collect_folder(context: void*?, view: const prism.RowView*) -> !:
                         key = try into.pool.keep_text(path.bytes[2..]), total = (u32)(view.integer("total") else 0),
                         unseen = (u32)(view.integer("unseen") else 0))
     # Keep the listing in the engine's order: INBOX first, then as the server lists.
-    try into.folders.add(folder)
-    try into.orders.add(order)
+    try into.folders.append(folder)
+    try into.orders.append(order)
     var at = into.folders.length() - 1
     while at > 0 and into.orders.at(at - 1) > order:
         into.folders.set(at, into.folders.at(at - 1))
@@ -395,12 +395,12 @@ pub func forget_account(held: interop.Reference[prism.Store], account: str) -> !
     var listed = try read_folders(store, account)
     defer listed.close()
     var identity: Buffer
-    defer identity.close()
+    defer identity.destroy()
     for folder in listed.folders.view():
         try folder_identity(account, folder.key.bytes, &identity)
-        try clear(store, identity.text_view())
+        try clear(store, identity.text())
     try outbox_identity(account, &identity)
-    try clear(store, identity.text_view())
+    try clear(store, identity.text())
     try clear(store, account)
 
 func clear(store: prism.Store*, identity: str) -> !:
@@ -419,10 +419,10 @@ func clear(store: prism.Store*, identity: str) -> !:
 ## the body is not in the store yet.
 pub func read_raw(store: prism.Store*, identity: str, uid: u32, out: Buffer*) -> bool!:
     var path: Buffer
-    defer path.close()
+    defer path.destroy()
     try path.put(b"/m")
-    try path.number((i64)uid)
-    return try read_raw_at(store, identity, path.text_view(), out)
+    try path.put_number((i64)uid)
+    return try read_raw_at(store, identity, path.text(), out)
 
 func read_raw_at(store: prism.Store*, identity: str, path: str, out: Buffer*) -> bool!:
     if not try store.mounted(identity):
@@ -443,17 +443,17 @@ pub func has_body(store: prism.Store*, identity: str, uid: u32) -> bool!:
     if not try store.mounted(identity):
         return false
     var path: Buffer
-    defer path.close()
+    defer path.destroy()
     try path.put(b"/m")
-    try path.number((i64)uid)
+    try path.put_number((i64)uid)
     let snap = try store.snapshot_identity(identity)
     defer snap.release()
-    return try (try snap.get()).has(path.text_view(), "raw")
+    return try (try snap.get()).has(path.text(), "raw")
 
 ## The outbox of `account`: messages queued for its engine to send or file.
 pub func outbox_identity(account: str, out: Buffer*) -> !:
     out.clear()
-    try out.text(account)
+    try out.put_text(account)
     try out.put(b".outbox")
 
 var queued: @u64
@@ -463,41 +463,41 @@ var queued: @u64
 pub func queue(held: interop.Reference[prism.Store], account: str, message: str) -> interop.Owned[str]!:
     let store = try held.get()
     var identity: Buffer
-    defer identity.close()
+    defer identity.destroy()
     try outbox_identity(account, &identity)
-    try ensure(store, identity.text_view())
+    try ensure(store, identity.text())
     var path: Buffer
-    defer path.close()
+    defer path.destroy()
     try path.put(b"/o")
-    try path.number((i64)time.now())
+    try path.put_number((i64)time.now())
     # A dot would start a slot in a prism path.
-    try path.byte('-')
-    try path.number((i64)queued.add(1, .relaxed))
-    let tx = try store.begin_identity(identity.text_view())
+    try path.put_byte('-')
+    try path.put_number((i64)queued.add(1, .relaxed))
+    let tx = try store.begin_identity(identity.text())
     defer tx.release()
     let session = try tx.get()
-    try session.add(path.text_view(), "outgoing")
-    try put_raw(session, path.text_view(), message.bytes)
+    try session.add(path.text(), "outgoing")
+    try put_raw(session, path.text(), message.bytes)
     _ = try session.commit(wait_ms = wait_ms)
-    return try interop.copy_text(path.text_view())
+    return try interop.copy_text(path.text())
 
 ## The queued message at `path` in `account`'s outbox, onto `out`; false when gone.
 pub func read_queued(store: prism.Store*, account: str, path: str, out: Buffer*) -> bool!:
     var identity: Buffer
-    defer identity.close()
+    defer identity.destroy()
     try outbox_identity(account, &identity)
-    return try read_raw_at(store, identity.text_view(), path, out)
+    return try read_raw_at(store, identity.text(), path, out)
 
 ## Drop the queued message at `path` from `account`'s outbox: it was sent or filed.
 pub func unqueue(store: prism.Store*, account: str, path: str) -> !:
     var identity: Buffer
-    defer identity.close()
+    defer identity.destroy()
     try outbox_identity(account, &identity)
-    var batch = try Batch.begin(store, identity.text_view())
+    var batch = try Batch.begin(store, identity.text())
     defer batch.close()
     let session = try batch.session_of()
     if try session.contains(path):
         try session.remove(path)
         batch.count += 1
     try batch.commit()
-    try bake(store, identity.text_view())
+    try bake(store, identity.text())

@@ -6,7 +6,7 @@ import interop
 import memory
 import thread
 from luce_prism import prism
-from engine_text import Buffer
+from luce_std.collections import Buffer
 from mail_queue import Mailroom
 from mail_sync import Engine
 
@@ -38,7 +38,7 @@ pub struct MailService:
         self.polled.clear()
         let room = self.room else return ""
         try room.drain(&self.polled)
-        return self.polled.text_view()
+        return self.polled.text()
 
     ## Stop the engine and wait for its thread.
     pub func close():
@@ -49,7 +49,7 @@ pub struct MailService:
         room.close()
         free(room) in memory.heap
         self.room = none
-        self.polled.close()
+        self.polled.destroy()
         if let held = self.store:
             held.release()
         self.store = none

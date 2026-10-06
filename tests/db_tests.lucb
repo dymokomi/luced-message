@@ -4,7 +4,7 @@ import interop
 from luce_prism import prism
 import mail_db
 from mail_store import Row, Folder
-from engine_text import Buffer
+from luce_std.collections import Buffer
 
 func message(uid: u32, flags: u16, date: i64, subject: str) -> Row:
     return Row(uid = uid, flags = flags, date = date, size = 10, attachment = false, sender = "Ann", subject = subject,
@@ -53,8 +53,8 @@ pub func run(held: interop.Reference[prism.Store]) -> !:
     try bodies.commit()
     assert(try mail_db.has_body(store, "acct.k1", 9) and not try mail_db.has_body(store, "acct.k1", 5))
     var raw: Buffer
-    defer raw.close()
-    assert(try mail_db.read_raw(store, "acct.k1", 9, &raw) and raw.text_view() == "Subject: Middle\r\n\r\nThe body.\r\n")
+    defer raw.destroy()
+    assert(try mail_db.read_raw(store, "acct.k1", 9, &raw) and raw.text() == "Subject: Middle\r\n\r\nThe body.\r\n")
     assert(not try mail_db.read_raw(store, "acct.k1", 5, &raw))
     var with_bodies = try mail_db.read_ledger(store, "acct.k1")
     defer with_bodies.close()
@@ -63,8 +63,8 @@ pub func run(held: interop.Reference[prism.Store]) -> !:
     let queued = try mail_db.queue(held, "acct", "Subject: Out\r\n\r\nHi.\r\n")
     defer queued.release()
     var out: Buffer
-    defer out.close()
-    assert(try mail_db.read_queued(store, "acct", queued.value, &out) and out.text_view() == "Subject: Out\r\n\r\nHi.\r\n")
+    defer out.destroy()
+    assert(try mail_db.read_queued(store, "acct", queued.value, &out) and out.text() == "Subject: Out\r\n\r\nHi.\r\n")
     try mail_db.unqueue(store, "acct", queued.value)
     assert(not try mail_db.read_queued(store, "acct", queued.value, &out))
     # Folders keep the listing's order, and a relisting drops the ones gone.

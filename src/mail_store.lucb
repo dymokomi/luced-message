@@ -2,7 +2,7 @@
 ## folder, and making the app's directory. A folder's key is a hash of its server
 ## path, so any name makes a valid prism identity.
 from luce_std import files
-from engine_text import Buffer
+from luce_std.collections import Buffer
 
 ## One message's row in a folder index.
 pub struct Row:
@@ -42,7 +42,7 @@ pub func put_key(path: const u8[], out: Buffer*) -> !:
         digest = (digest ^ byte) *% 0x100000001b3
     var shift: u64 = 60
     while true:
-        try out.byte("0123456789abcdef".bytes[(digest >> shift) & 15])
+        try out.put_byte("0123456789abcdef".bytes[(digest >> shift) & 15])
         if shift == 0:
             break
         shift -= 4

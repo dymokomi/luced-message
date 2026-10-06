@@ -4,7 +4,7 @@
 ## library (localtime_r's tm_gmtoff); on Windows times are shown in UTC for now.
 import platform
 import time
-from engine_text import Buffer
+from luce_std.collections import Buffer
 from luce_mime import mime
 
 ## The C library's broken-down time on 64-bit POSIX systems.
@@ -60,8 +60,8 @@ func local_time(seconds: i64) -> LocalTime:
 
 func two_digits(value: i64) -> !:
     if value < 10:
-        try formatted.byte('0')
-    try formatted.number(value)
+        try formatted.put_byte('0')
+    try formatted.put_number(value)
 
 ## The short form of `seconds` for a message list, relative to now.
 pub func list_date(seconds: i64) -> str!:
@@ -72,18 +72,18 @@ pub func list_date(seconds: i64) -> str!:
     let today = local_time(time.unix())
     if moment.days == today.days:
         try two_digits(moment.minute_of_day // 60)
-        try formatted.byte(':')
+        try formatted.put_byte(':')
         try two_digits(moment.minute_of_day % 60)
     elif today.days - moment.days < 7 and today.days > moment.days:
-        try formatted.text(weekdays[(usize)moment.weekday])
+        try formatted.put_text(weekdays[(usize)moment.weekday])
     else:
-        try formatted.number(moment.day)
-        try formatted.byte(' ')
-        try formatted.text(months[(usize)(moment.month - 1)])
+        try formatted.put_number(moment.day)
+        try formatted.put_byte(' ')
+        try formatted.put_text(months[(usize)(moment.month - 1)])
         if moment.year != today.year:
-            try formatted.byte(' ')
-            try formatted.number(moment.year)
-    return formatted.text_view()
+            try formatted.put_byte(' ')
+            try formatted.put_number(moment.year)
+    return formatted.text()
 
 ## The long form of `seconds` for a reader's header.
 pub func long_date(seconds: i64) -> str!:
@@ -91,15 +91,15 @@ pub func long_date(seconds: i64) -> str!:
     if seconds <= 0:
         return ""
     let moment = local_time(seconds)
-    try formatted.text(weekdays[(usize)moment.weekday])
-    try formatted.byte(' ')
-    try formatted.number(moment.day)
-    try formatted.byte(' ')
-    try formatted.text(months[(usize)(moment.month - 1)])
-    try formatted.byte(' ')
-    try formatted.number(moment.year)
-    try formatted.byte(' ')
+    try formatted.put_text(weekdays[(usize)moment.weekday])
+    try formatted.put_byte(' ')
+    try formatted.put_number(moment.day)
+    try formatted.put_byte(' ')
+    try formatted.put_text(months[(usize)(moment.month - 1)])
+    try formatted.put_byte(' ')
+    try formatted.put_number(moment.year)
+    try formatted.put_byte(' ')
     try two_digits(moment.minute_of_day // 60)
-    try formatted.byte(':')
+    try formatted.put_byte(':')
     try two_digits(moment.minute_of_day % 60)
-    return formatted.text_view()
+    return formatted.text()

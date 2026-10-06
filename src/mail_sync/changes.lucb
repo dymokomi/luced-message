@@ -23,14 +23,14 @@ extend Engine:
     ## Apply a flag change or a removal to folder `path` in the store and announce it.
     func update_index(path: const u8[], uids: const u8[], bits: u16, add: bool, remove: bool) -> !:
         var identity: Buffer
-        defer identity.close()
+        defer identity.destroy()
         try self.folder_identity_of(path, &identity)
-        var ledger = try mail_db.read_ledger(self.store, identity.text_view())
+        var ledger = try mail_db.read_ledger(self.store, identity.text())
         defer ledger.close()
-        var batch = try mail_db.Batch.begin(self.store, identity.text_view())
+        var batch = try mail_db.Batch.begin(self.store, identity.text())
         defer batch.close()
-        var numbers: Records[u32]
-        defer numbers.close()
+        var numbers: List[u32]
+        defer numbers.destroy()
         try read_set(uids, &numbers)
         for uid in numbers.view():
             if remove:
@@ -55,17 +55,17 @@ extend Engine:
     func send_message(queued: const u8[], sender: const u8[], recipients: const u8[]) -> !:
         self.post("status", b"Sending")
         var message: Buffer
-        defer message.close()
+        defer message.destroy()
         if not try mail_db.read_queued(self.store, self.account.id, (str)queued, &message):
             error(imap.unsupported, "the queued message is gone")
         let data = message.view()
-        var list: Records[str]
-        defer list.close()
+        var list: List[str]
+        defer list.destroy()
         var start: usize = 0
         for at in 0..<recipients.length + 1:
             if at == recipients.length or recipients[at] == ',':
                 if at > start:
-                    try list.add(try self.text.keep_text(recipients[start..<at]))
+                    try list.append(try self.text.keep_text(recipients[start..<at]))
                 start = at + 1
         var client = try smtp.Client.open(self.account.smtp_host, self.account.smtp_port, self.account.smtp_security, cancellation = &self.room.quit)
         defer client.close()
@@ -112,7 +112,7 @@ extend Engine:
 
     func file_draft(queued: const u8[]) -> !:
         var message: Buffer
-        defer message.close()
+        defer message.destroy()
         if not try mail_db.read_queued(self.store, self.account.id, (str)queued, &message):
             error(imap.unsupported, "the queued draft is gone")
         let data = message.view()

@@ -19,7 +19,7 @@ extend Engine:
             try self.sync_folder(at)
             # A command the window is waiting on goes before the remaining folders.
             var command: Buffer
-            defer command.close()
+            defer command.destroy()
             while try self.room.take(&command):
                 try self.handle(command.view())
         try self.save_folders()
@@ -30,9 +30,9 @@ extend Engine:
     func list_folders() -> !:
         let mailboxes = try self.session.list()
         self.folders.clear()
-        self.folder_text.close()
+        self.folder_text.destroy()
         var key: Buffer
-        defer key.close()
+        defer key.destroy()
         # INBOX first: it is what the user looks at.
         for pass in 0..<2:
             for mailbox in mailboxes:
@@ -41,7 +41,7 @@ extend Engine:
                     continue
                 key.clear()
                 try put_key(mailbox.path, &key)
-                try self.folders.add(Folder(path = try self.folder_text.keep_text(mailbox.path), name = try self.folder_text.keep_text(mailbox.name.bytes),
+                try self.folders.append(Folder(path = try self.folder_text.keep_text(mailbox.path), name = try self.folder_text.keep_text(mailbox.name.bytes),
                                             delimiter = mailbox.delimiter, flags = (u32)mailbox.flags, key = try self.folder_text.keep_text(key.view())))
         try self.save_folders()
         self.post("folders")
@@ -50,19 +50,19 @@ extend Engine:
     func save_folders() -> !:
         var batch = try mail_db.Batch.begin(self.store, self.account.id)
         defer batch.close()
-        var kept: Pool
-        defer kept.close()
-        var paths: Records[str]
-        defer paths.close()
+        var kept: TextPool
+        defer kept.destroy()
+        var paths: List[str]
+        defer paths.destroy()
         var element: Buffer
-        defer element.close()
+        defer element.destroy()
         for order in 0..<self.folders.length():
             let folder = self.folders.at(order)
             try batch.put_folder(&folder, order)
             element.clear()
             try element.put(b"/f")
-            try element.text(folder.key)
-            try paths.add(try kept.keep_text(element.view()))
+            try element.put_text(folder.key)
+            try paths.append(try kept.keep_text(element.view()))
         try batch.remove_others(paths.view())
         try batch.commit()
 
@@ -71,12 +71,12 @@ extend Engine:
         let folder = self.folders.at(at)
         let path = folder.path.bytes
         var identity: Buffer
-        defer identity.close()
+        defer identity.destroy()
         try mail_db.folder_identity(self.account.id, folder.key.bytes, &identity)
-        var ledger = try mail_db.read_ledger(self.store, identity.text_view())
+        var ledger = try mail_db.read_ledger(self.store, identity.text())
         defer ledger.close()
         let state = try self.select(path)
-        var batch = try mail_db.Batch.begin(self.store, identity.text_view())
+        var batch = try mail_db.Batch.begin(self.store, identity.text())
         defer batch.close()
         var changed = false
         if ledger.uid_validity != state.uid_validity or (state.exists == 0 and ledger.uids.length() > 0):
@@ -99,7 +99,7 @@ extend Engine:
         changed = batch.count > 0 or changed
         try batch.commit()
         if changed:
-            try mail_db.bake(self.store, identity.text_view())
+            try mail_db.bake(self.store, identity.text())
             self.post("folder", path)
         var updated = folder
         updated.total = (u32)ledger.uids.length()
@@ -109,14 +109,14 @@ extend Engine:
     ## Update every held message's flags and drop the ones the server no longer has.
     func refresh_flags(ledger: mail_db.Ledger*, batch: mail_db.Batch*) -> !:
         var set: Buffer
-        defer set.close()
+        defer set.destroy()
         try set.put(b"1:")
-        try set.number((i64)ledger.last_uid())
-        let records = try self.session.fetch(set.text_view(), "(UID FLAGS)")
-        var seen: Records[bool]
-        defer seen.close()
+        try set.put_number((i64)ledger.last_uid())
+        let records = try self.session.fetch(set.text(), "(UID FLAGS)")
+        var seen: List[bool]
+        defer seen.destroy()
         while seen.length() < ledger.uids.length():
-            try seen.add(false)
+            try seen.append(false)
         for record in records:
             if let at = ledger.find(record.uid):
                 seen.set(at, true)
@@ -135,16 +135,16 @@ extend Engine:
     ## so the window shows them as they come. Whether any arrived.
     func fetch_new(path: const u8[], ledger: mail_db.Ledger*, batch: mail_db.Batch*) -> bool!:
         var criteria: Buffer
-        defer criteria.close()
+        defer criteria.destroy()
         try criteria.put(b"UID ")
-        try criteria.number((i64)ledger.last_uid() + 1)
+        try criteria.put_number((i64)ledger.last_uid() + 1)
         try criteria.put(b":*")
-        let found = try self.session.search(criteria.text_view())
-        var uids: Records[u32]
-        defer uids.close()
+        let found = try self.session.search(criteria.text())
+        var uids: List[u32]
+        defer uids.destroy()
         for uid in found:
             if uid > ledger.last_uid():
-                try uids.add(uid)
+                try uids.append(uid)
         var end = uids.length()
         let any = end > 0
         while end > 0:
@@ -153,8 +153,8 @@ extend Engine:
             defer set.close()
             try imap.write_set(uids.view()[start..<end], &set)
             let records = try self.session.fetch_headers((str)set.view(), summary_fields)
-            var text: Pool
-            defer text.close()
+            var text: TextPool
+            defer text.destroy()
             for record in records:
                 let row = try summarize(&record, &text)
                 try batch.put_row(&row)
@@ -201,11 +201,11 @@ extend Engine:
     ## Fetch message `uid` of folder `path` for the window, which waits for it.
     func fetch_body(path: const u8[], uid: u32) -> !:
         var identity: Buffer
-        defer identity.close()
+        defer identity.destroy()
         try self.folder_identity_of(path, &identity)
-        if not try mail_db.has_body(self.store, identity.text_view(), uid):
+        if not try mail_db.has_body(self.store, identity.text(), uid):
             _ = try self.select(path)
-            var batch = try mail_db.Batch.begin(self.store, identity.text_view())
+            var batch = try mail_db.Batch.begin(self.store, identity.text())
             defer batch.close()
             _ = try self.store_body(uid, &batch)
             let changed = batch.count > 0
@@ -213,12 +213,12 @@ extend Engine:
             if changed:
                 self.post("folder", path)
         var number: Buffer
-        defer number.close()
-        try number.number((i64)uid)
+        defer number.destroy()
+        try number.put_number((i64)uid)
         self.post("body", path, number.view())
 
 ## The row a message list needs from a fetched header, its text kept in `text`.
-func summarize(record: const imap.Fetched*, text: Pool*) -> Row!:
+func summarize(record: const imap.Fetched*, text: TextPool*) -> Row!:
     var message = try mime.Message.read(record.header)
     defer message.close()
     let sender = try message.address_line("From", short = true)
@@ -230,7 +230,7 @@ func summarize(record: const imap.Fetched*, text: Pool*) -> Row!:
                in_reply_to = try text.keep_text((try message.in_reply_to()).bytes), preview = "")
 
 ## The UIDs of sequence set `text` (`4:7,9`) onto `out`.
-func read_set(text: const u8[], out: Records[u32]*) -> !:
+func read_set(text: const u8[], out: List[u32]*) -> !:
     var index: usize = 0
     while index < text.length:
         var first: u32 = 0
@@ -246,6 +246,6 @@ func read_set(text: const u8[], out: Records[u32]*) -> !:
                 index += 1
         var value = first
         while value <= last and value - first < 100000:
-            try out.add(value)
+            try out.append(value)
             value += 1
         index += 1

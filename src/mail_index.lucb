@@ -6,7 +6,7 @@ import interop
 import memory
 from luce_prism import prism
 from luce_mime import mime
-from engine_text import Buffer, Records
+from luce_std.collections import Buffer, List
 from mail_store import Row, Folder
 from mail_threads import Threads, thread
 import mail_db
@@ -15,9 +15,9 @@ import mail_db
 pub struct MessageIndex:
     var rows: mail_db.Rows
     ## Positions in UID order, for `position`.
-    var by_uid: Records[u32]
+    var by_uid: List[u32]
     ## Positions newest first: by date, then by UID.
-    var order: Records[u32]
+    var order: List[u32]
     ## The messages grouped into conversations.
     var threads: Threads
 
@@ -88,14 +88,14 @@ pub struct MessageIndex:
     func sort() -> !:
         let count = self.rows.rows.length()
         for at in 0..<count:
-            try self.by_uid.add((u32)at)
-            try self.order.add((u32)at)
+            try self.by_uid.append((u32)at)
+            try self.order.append((u32)at)
         try self.merge_sort(&self.by_uid, true)
         try self.merge_sort(&self.order, false)
 
     ## Sort `positions` by UID (`by_uid`), else newest first; a stable merge sort, fast
     ## on the mostly sorted orders mailboxes have.
-    func merge_sort(positions: Records[u32]*, by_uid: bool) -> !:
+    func merge_sort(positions: List[u32]*, by_uid: bool) -> !:
         let count = positions.length()
         if count < 2:
             return
@@ -181,8 +181,8 @@ pub struct MessageIndex:
 
     pub func close():
         self.rows.close()
-        self.by_uid.close()
-        self.order.close()
+        self.by_uid.destroy()
+        self.order.destroy()
         self.threads.close()
 
 pub let message_index_type: interop.Type[MessageIndex] = interop.Type[MessageIndex]("Message index", MessageIndex.close, closeable = true)
@@ -201,7 +201,7 @@ pub func open_message(store: interop.Reference[prism.Store], identity: str, uid:
     if uid < 0 or uid > 0xFFFFFFFF:
         return none
     var raw: Buffer
-    defer raw.close()
+    defer raw.destroy()
     if not try mail_db.read_raw(try store.get(), identity, (u32)uid, &raw):
         return none
     return try mime.parse(raw.view())
@@ -281,8 +281,8 @@ pub func read_folders(store: interop.Reference[prism.Store], account: str) -> in
 ## Whether a file or directory exists at `path`.
 pub func exists(path: str) -> bool:
     var name: Buffer
-    defer name.close()
-    name.text(path) catch failure:
+    defer name.destroy()
+    name.put_text(path) catch failure:
         return false
     let file = name.terminated() catch failure:
         return false

@@ -2,10 +2,9 @@
 ## and events the other, each a line of tab-separated fields (engine_text's format).
 ## Everything here is guarded by one lock; the window never waits on the engine, and
 ## the engine looks for commands between its network steps.
-import memory
 import sync
 from luce_prism import prism
-from engine_text import Buffer
+from luce_std.collections import Buffer
 
 pub struct Mailroom:
     var lock: sync.Mutex
@@ -24,7 +23,7 @@ pub struct Mailroom:
         self.lock.lock()
         defer self.lock.unlock()
         try self.commands.put(line)
-        try self.commands.byte('\n')
+        try self.commands.put_byte('\n')
 
     ## Move every pending event line onto `out` (window side).
     pub func drain(out: Buffer*) -> !:
@@ -46,7 +45,7 @@ pub struct Mailroom:
         defer self.lock.unlock()
         self.events.put(line) catch failure:
             return
-        self.events.byte('\n') catch failure:
+        self.events.put_byte('\n') catch failure:
             return
 
     ## Take the next command onto `out`; whether there was one (engine side).
@@ -61,16 +60,14 @@ pub struct Mailroom:
             return false
         out.clear()
         try out.put(data[0..<end])
-        let rest = data.length - end - 1
-        memory.move(self.commands.data, self.commands.data[end + 1..], rest)
-        self.commands.used = rest
+        self.commands.remove(0, end + 1)
         return true
 
     ## Whether a command is waiting (engine side).
     pub func has_command() -> bool:
         self.lock.lock()
         defer self.lock.unlock()
-        return self.commands.used > 0
+        return self.commands.length() > 0
 
     ## Whether the engine should stop (engine side).
     pub func stopped() -> bool:
@@ -79,6 +76,6 @@ pub struct Mailroom:
         return self.stopping
 
     pub func close():
-        self.commands.close()
-        self.events.close()
-        self.config.close()
+        self.commands.destroy()
+        self.events.destroy()
+        self.config.destroy()

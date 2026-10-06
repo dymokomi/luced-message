@@ -4,7 +4,8 @@
 ## message with the same subject once its Re:/Fwd: prefixes are stripped. Threads are
 ## ordered by their newest message, newest first, and so are the messages inside one.
 import memory
-from engine_text import Records, equal
+from luce_std.collections import List
+from engine_text import equal
 from mail_store import Row
 
 ## One key and the row it came from, for sorted lookup.
@@ -15,9 +16,9 @@ struct Keyed:
 ## A folder's conversations.
 pub struct Threads:
     ## Row positions, a thread's members together, threads newest first.
-    var order: Records[u32]
+    var order: List[u32]
     ## Where each thread starts in `order`, and one past the last thread's end.
-    var starts: Records[u32]
+    var starts: List[u32]
 
     ## How many conversations there are.
     pub func count() -> usize:
@@ -32,8 +33,8 @@ pub struct Threads:
         return self.order.at((usize)self.starts.at(nth) + member)
 
     pub func close():
-        self.order.close()
-        self.starts.close()
+        self.order.destroy()
+        self.starts.destroy()
 
 ## FNV-1a of `text`, for grouping by message ID or subject.
 func digest_of(text: const u8[]) -> u64:
@@ -130,7 +131,7 @@ func lower_bound(keys: const Keyed[], digest: u64) -> usize?:
     return none
 
 ## Whether row `a` is newer than row `b`: by date, then UID.
-func newer(rows: const Records[Row]*, a: u32, b: u32) -> bool:
+func newer(rows: const List[Row]*, a: u32, b: u32) -> bool:
     let first = rows.at((usize)a)
     let second = rows.at((usize)b)
     if first.date != second.date:
@@ -138,12 +139,12 @@ func newer(rows: const Records[Row]*, a: u32, b: u32) -> bool:
     return first.uid > second.uid
 
 ## Group `rows` into conversations.
-pub func thread(rows: const Records[Row]*) -> Threads!:
+pub func thread(rows: const List[Row]*) -> Threads!:
     var threads: Threads
     errdefer threads.close()
     let count = rows.length()
     if count == 0:
-        try threads.starts.add(0)
+        try threads.starts.append(0)
         return threads
     var groups = Groups(parent = try new u32[count] --- in memory.heap)
     defer free(groups.parent) in memory.heap
@@ -242,13 +243,13 @@ pub func thread(rows: const Records[Row]*) -> Threads!:
         width *= 2
     for at in 0..<count:
         if at == 0 or groups.find(ordered[at]) != groups.find(ordered[at - 1]):
-            try threads.starts.add((u32)at)
-        try threads.order.add(ordered[at])
-    try threads.starts.add((u32)count)
+            try threads.starts.append((u32)at)
+        try threads.order.append(ordered[at])
+    try threads.starts.append((u32)count)
     return threads
 
 ## Whether row `a` goes before row `b`: its thread is newer, or, in one thread, it is.
-func before(rows: const Records[Row]*, groups: Groups*, newest: const u32[], a: u32, b: u32) -> bool:
+func before(rows: const List[Row]*, groups: Groups*, newest: const u32[], a: u32, b: u32) -> bool:
     let root_a = groups.find(a)
     let root_b = groups.find(b)
     if root_a != root_b:
