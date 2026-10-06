@@ -131,8 +131,8 @@ extend Engine:
         _ = try self.select(path)
         self.post("status", b"Searching")
         let uids = try self.session.search_text((str)query)
-        var list: imap.Bytes
-        defer list.close()
+        var list: Buffer
+        defer list.destroy()
         try imap.write_set(uids, &list)
         self.post("found", path, list.view())
         self.post("status", b"")
