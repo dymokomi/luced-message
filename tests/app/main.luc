@@ -114,7 +114,7 @@ func application(root: str) -> unit!:
     check(built.exit_code == 0, f"the application does not build: {built.output}{built.error_output}")
 
 pub func main(arguments: list[str]) -> int!:
-    let root = files.canonical("../..")
+    let root = files.canonical(".")
     let directory = paths.join(root, "build/tests/app/scratch")
     if files.exists(directory):
         files.remove_tree(directory)
