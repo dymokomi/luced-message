@@ -73,7 +73,7 @@ The [design notes](docs/DESIGN.md) give the whole picture. In short:
 ## Develop
 
 ```sh
-python3 tests/run.py                       # headless tests
+luc test                                   # headless tests
 tools/test-server.sh && tools/seed.py      # a local GreenMail with mail for alice@example.test
 python3 tools/preview.py --home DIR        # a real frame of the window, synced, as build/preview.png
 ```

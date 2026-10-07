@@ -1,9 +1,10 @@
 ## luced-message's headless tests: accounts, the store as the window reads it, folder
-## roles and the composer's reply text. Run by tests/run.py with a scratch directory.
+## roles and the composer's reply text; and the application itself builds, saying the
+## version package.prisma gives.
 from accounts import Account, AccountStore, account_id, escape
 import mail_index
 import clock
-from luce_std import files, paths
+from luce_std import files, paths, process
 import sources_tests
 import composer_tests
 import list_tests
@@ -102,9 +103,23 @@ func conversations() -> unit!:
     check(index.thread_size(4) == 2, "replies to a missing message join")
     check(index.thread_attachment(0), "the Lunch thread has an attachment")
 
+# The application builds, the window included, which the tests do not import all of, and
+# src/app.luc's version is package.prisma's.
+func application(root: str) -> unit!:
+    let declared = files.read_text(paths.join(root, "package.prisma")).split("    str version = \"")[1].split("\"")[0]
+    let said = files.read_text(paths.join(root, "src/app.luc")).split("pub let version: str = \"")[1].split("\"")[0]
+    check(said == declared, f"src/app.luc says {said}; package.prisma says {declared}")
+    let luce = process.variable("LUCE") else "luce"
+    let built = process.run(luce, ["build", paths.join(root, "src/main.luc"), "--native", "-o", paths.join(root, "build/tests/app/luced-message")], root)
+    check(built.exit_code == 0, f"the application does not build: {built.output}{built.error_output}")
+
 pub func main(arguments: list[str]) -> int!:
-    let directory = arguments[0] if arguments.length > 0 else "/tmp/luced-message-tests"
+    let root = files.canonical("../..")
+    let directory = paths.join(root, "build/tests/app/scratch")
+    if files.exists(directory):
+        files.remove_tree(directory)
     files.ensure_directory(directory)
+    application(root)
     accounts_round_trip(directory)
     accounts_without_keychain(directory)
     index_reading()
